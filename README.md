@@ -11,17 +11,11 @@ UserRecovery/
 ├── Inheritor - White Paper.pdf
 ├── Manuals/
 │   ├── CheckClaimable.md
-│   ├── CheckClaimable.pdf
 │   ├── ClaimManual.md
-│   ├── ClaimManual.pdf
-│   ├── TestatorManual.md
-│   └── TestatorManual.pdf
-├── Mitigation.pdf
+│   └── TestatorManual.md
 ├── README.md
-├── README.pdf
 ├── faq/
-│   ├── faq.md
-│   └── faq.pdf
+│   └── faq.md
 ├── mitigation.md
 ├── package-lock.json
 ├── package.json
