@@ -1,6 +1,4 @@
-# Inheritor Digital Inheritance Solutions
-
-![Inheritor Banner](https://via.placeholder.com/1200x300?text=Inheritor+Digital+Inheritance+Solutions)
+# Inheritor - On-Chain Digital Inheritance
 
 ## About Inheritor
 
