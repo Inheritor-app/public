@@ -14,8 +14,6 @@ UserRecovery/
 │   ├── ClaimManual.md
 │   └── TestatorManual.md
 ├── README.md
-├── faq/
-│   └── faq.md
 ├── mitigation.md
 ├── package-lock.json
 ├── package.json
