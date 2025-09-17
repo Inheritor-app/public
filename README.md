@@ -8,11 +8,14 @@ Inheritor is a blockchain-based solution for creating digital wills that securel
 
 ```
 UserRecovery/
-├── Inheritor - White Paper.pdf
+├── Inheritor - Whitepaper.md
 ├── Manuals/
 │   ├── CheckClaimable.md
 │   ├── ClaimManual.md
 │   └── TestatorManual.md
+├── keys/                          # Directory for exported key files
+├── .env                           # Environment variables (git ignored)
+├── .env.example                   # Environment variables template
 ├── README.md
 ├── mitigation.md
 ├── package-lock.json
@@ -72,24 +75,21 @@ Each tool has detailed installation and usage instructions in its corresponding 
 
 - Node.js (v16.0.0 or higher)
 - Basic command-line knowledge
-- For testators: Your testator recovery mnemonic and a gas wallet with ETH
-- For beneficiaries: Your beneficiary recovery mnemonic and a gas wallet with ETH
+- For testators: Exported key file from Inheritor iOS app and a gas wallet with ETH
+- For beneficiaries: Exported key file from Inheritor iOS app and a gas wallet with ETH
 
-## Documentation
-
-- **White Paper**: [Inheritor - White Paper.pdf](Inheritor%20-%20White%20Paper.pdf) - Comprehensive overview of the Inheritor system architecture and cryptographic design
-- **FAQ**: [faq/faq.md](faq/faq.md) - Frequently asked questions about Inheritor
-- **Mitigation Strategy**: [mitigation.md](mitigation.md) - How Inheritor ensures your digital will remains accessible regardless of the company's existence
 
 ## Security Considerations
 
 These tools provide direct access to your blockchain assets and sensitive cryptographic keys. Always follow these security practices:
 
 - Run these tools only on secure, trusted devices
-- Never share your recovery mnemonic or private keys
+- Never share your exported key files, recovery mnemonics, or private keys
+- Secure your `.env` file and exported key files - they contain sensitive private keys for both testator and beneficiary
 - Use these tools only in genuine emergency situations when the Inheritor app is unavailable
 - Verify all transaction details before confirming
 - Move any claimed assets to secure storage immediately
+- Delete exported key files after use or store them in secure, encrypted storage
 
 ## Technical Overview
 
@@ -104,13 +104,27 @@ The system creates a cryptographically secure time-lock mechanism where assets c
 
 ## Installation
 
-To install the required dependencies:
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+   This will install all the Node.js packages needed to run the scripts.
 
-```bash
-npm install
-```
+2. **Set up environment variables:**
+   ```bash
+   cp .env.example .env
+   ```
+   Edit the `.env` file and add your gas wallet private key:
+   ```
+   GAS_WALLET_PRIVATE_KEY=your_private_key_here
+   ```
+   Note: Private key can be provided with or without the 0x prefix.
 
-This will install all the Node.js packages needed to run the scripts, as specified in package.json.
+3. **Set up keys (for Testator and Beneficiary tools):**
+   - Export your keys from the Inheritor iOS app
+   - Place the exported `InheritorKeys_YYYY-MM-DD.json` file in the `./keys/` directory
+   - The scripts will automatically detect and use the most recent key file
+   - Testator tools use the testator keys, beneficiary tools use the beneficiary keys from the same file
 
 ## License
 

@@ -19,6 +19,9 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# Exported key files (contain sensitive private keys)
+keys/
+
 # Mac OS
 .DS_Store
 

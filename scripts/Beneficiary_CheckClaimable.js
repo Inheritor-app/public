@@ -10,18 +10,18 @@
  * 3. Refund remaining ETH from the beneficiary wallet to the gas wallet
  */
 
+require('dotenv').config();
 const { ethers } = require('ethers');
-const bip39 = require('bip39');
-const { HDNode } = require('@ethersproject/hdnode');
 const readline = require('readline');
-const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 // =============================================================================
 // Configuration Constants
 // =============================================================================
 
 // Contract & Network Settings
-const PROXY_CONTRACT_ADDRESS = '0x1539421f1C4E7AE4CFDBc42F2723558D2fE407dF'; // Only on Ethereum
+const PROXY_CONTRACT_ADDRESS = '0x81DA9Fc682d1F8Baf80ebCCe64122A6688E4F37A'; // Only on Ethereum
 const ETHEREUM_CHAIN_ID = 1;
 const ARBITRUM_CHAIN_ID = 42161;
 
@@ -65,13 +65,32 @@ const NETWORK_CONFIGS = {
   }
 };
 
+// Inheritance state constants
+const INHERITANCE_STATES = {
+  DESIGNATED: 0,
+  CLAIMABLE: 1,
+  CLAIMED: 2,
+  REVOKED: 3,
+  PURGED: 4
+};
+
 // State enum from the contract with readable names and color formatting
 const STATE_NAMES = {
-  0: '\x1b[32mDesignated\x1b[0m',   // Green
-  1: '\x1b[33mClaimable\x1b[0m',    // Yellow (for orange)
-  2: '\x1b[34mClaimed\x1b[0m',      // Blue
-  3: '\x1b[31mRevoked\x1b[0m',      // Red
-  4: '\x1b[90mPurged\x1b[0m'        // Gray
+  [INHERITANCE_STATES.DESIGNATED]: '\x1b[32mDesignated\x1b[0m',   // Green
+  [INHERITANCE_STATES.CLAIMABLE]: '\x1b[33mClaimable\x1b[0m',    // Yellow (for orange)
+  [INHERITANCE_STATES.CLAIMED]: '\x1b[34mClaimed\x1b[0m',      // Blue
+  [INHERITANCE_STATES.REVOKED]: '\x1b[31mRevoked\x1b[0m',      // Red
+  [INHERITANCE_STATES.PURGED]: '\x1b[90mPurged\x1b[0m'        // Gray
+};
+
+// Gas estimation and funding constants
+const GAS_CONSTANTS = {
+  SAFETY_MULTIPLIER: 1.2,         // 20% buffer for gas estimates
+  FUNDING_MULTIPLIER: 2,          // 2x multiplier for funding amounts
+  REFUND_BUFFER_MULTIPLIER: 1.2,  // 20% buffer for refunds
+  FALLBACK_GAS_LIMIT: 100000,     // Fallback gas limit
+  MIN_REFUNDABLE_AMOUNT: "0.001", // Minimum amount worth refunding
+  STANDARD_TRANSFER_GAS: 21000    // Standard ETH transfer gas limit
 };
 
 // =============================================================================
@@ -88,28 +107,83 @@ function question(query) {
 }
 
 /**
- * Derive Ethereum keys from a mnemonic phrase (BIP39 recovery phrase)
- * @param {string} mnemonic The recovery phrase (BIP39 mnemonic)
+ * Load beneficiary keys from exported JSON key file
  * @returns {Object} Object containing address, privateKey, and publicKey
  */
-function deriveKeysFromMnemonic(mnemonic) {
-  // Validate mnemonic
-  if (!bip39.validateMnemonic(mnemonic)) {
-    throw new Error('Invalid mnemonic phrase');
+function loadBeneficiaryKeysFromFile() {
+  const keysDir = path.join(__dirname, '..', 'keys');
+
+  // Check if keys directory exists
+  if (!fs.existsSync(keysDir)) {
+    throw new Error(`Keys directory not found at ${keysDir}. Please create the directory and place your exported key file there.`);
   }
-  
-  // Convert mnemonic to seed
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
-  
-  // Create HD wallet using the standard Ethereum path m/44'/60'/0'/0/0
-  const hdNode = HDNode.fromSeed(seed);
-  const wallet = hdNode.derivePath("m/44'/60'/0'/0/0");
-  
-  return {
-    address: wallet.address,
-    privateKey: wallet.privateKey,
-    publicKey: wallet.publicKey
-  };
+
+  // Find InheritorKeys_*.json files
+  const files = fs.readdirSync(keysDir).filter(file =>
+    file.startsWith('InheritorKeys_') && file.endsWith('.json')
+  );
+
+  if (files.length === 0) {
+    throw new Error(`No InheritorKeys_*.json files found in ${keysDir}. Please export your keys from the iOS app and place the file there.`);
+  }
+
+  // Use the most recent file (lexicographically, which works for YYYY-MM-DD format)
+  const keyFile = files.sort().reverse()[0];
+  const keyFilePath = path.join(keysDir, keyFile);
+
+  console.log(`Loading keys from: ${keyFile}`);
+
+  try {
+    // Read and parse the JSON file
+    const keyFileContent = fs.readFileSync(keyFilePath, 'utf8');
+    const keyData = JSON.parse(keyFileContent);
+
+    // Validate the JSON structure
+    if (!keyData.beneficiary || !keyData.beneficiary.ethereum) {
+      throw new Error('Invalid key file format: missing beneficiary.ethereum section');
+    }
+
+    const beneficiaryEthKeys = keyData.beneficiary.ethereum;
+
+    // Validate required fields
+    if (!beneficiaryEthKeys.address || !beneficiaryEthKeys.privateKey) {
+      throw new Error('Invalid key file format: missing address or privateKey');
+    }
+
+    // Validate address format
+    if (!ethers.isAddress(beneficiaryEthKeys.address)) {
+      throw new Error('Invalid address format in key file');
+    }
+
+    // Normalize private key format (add 0x prefix if missing)
+    let privateKey = beneficiaryEthKeys.privateKey;
+    if (!privateKey.startsWith('0x')) {
+      privateKey = '0x' + privateKey;
+    }
+
+    // Validate private key format (should be 66 characters with 0x prefix, or 64 without)
+    if (privateKey.length !== 66 || !privateKey.startsWith('0x')) {
+      throw new Error('Invalid private key format in key file (must be 64 hex characters, with or without 0x prefix)');
+    }
+
+    // Verify the private key matches the address
+    const wallet = new ethers.Wallet(privateKey);
+    if (wallet.address.toLowerCase() !== beneficiaryEthKeys.address.toLowerCase()) {
+      throw new Error('Private key does not match address in key file');
+    }
+
+    return {
+      address: beneficiaryEthKeys.address,
+      privateKey: privateKey, // Return normalized private key with 0x prefix
+      publicKey: wallet.publicKey
+    };
+
+  } catch (error) {
+    if (error.message.includes('JSON')) {
+      throw new Error(`Failed to parse key file: ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -120,6 +194,74 @@ function deriveKeysFromMnemonic(mnemonic) {
 function formatTimestamp(timestamp) {
   const ts = typeof timestamp === 'bigint' ? Number(timestamp) : Number(timestamp);
   return new Date(ts * 1000).toLocaleString();
+}
+
+/**
+ * Ensures a wallet has sufficient funds for operations, transferring from gas wallet if needed
+ * @param {Object} walletKeys - Object containing {address: string, privateKey: string, publicKey: string}
+ * @param {ethers.Wallet} gasWallet - Gas wallet for funding transfers
+ * @param {ethers.Provider} provider - Network provider
+ * @param {bigint} requiredAmount - Required amount in wei
+ * @param {string} operationName - Name of operation for user messages
+ * @returns {Promise<ethers.Wallet>} Funded wallet instance
+ */
+async function ensureWalletFunding(walletKeys, gasWallet, provider, requiredAmount, operationName) {
+  // Create wallet instance
+  const wallet = new ethers.Wallet(walletKeys.privateKey, provider);
+
+  // Check current balance
+  const currentBalance = await provider.getBalance(wallet.address);
+  console.log(`${operationName} wallet balance: ${ethers.formatEther(currentBalance)} ETH`);
+
+  // Check if funding is needed
+  if (currentBalance >= requiredAmount) {
+    return wallet; // Already has sufficient funds
+  }
+
+  console.log(`\n${operationName} wallet needs funding for gas.`);
+
+  // Calculate funding amount with safety buffer
+  const fundAmount = requiredAmount * BigInt(GAS_CONSTANTS.FUNDING_MULTIPLIER);
+
+  const fundConfirmation = await question(
+    `Do you want to transfer ${ethers.formatEther(fundAmount)} ETH from gas wallet to ${operationName.toLowerCase()} wallet? (yes/no): `
+  );
+
+  if (fundConfirmation.toLowerCase() !== 'yes') {
+    throw new Error(`${operationName} cancelled: wallet needs ETH for gas`);
+  }
+
+  // Check gas wallet balance
+  const gasWalletBalance = await provider.getBalance(gasWallet.address);
+  console.log(`Gas wallet balance: ${ethers.formatEther(gasWalletBalance)} ETH`);
+
+  if (gasWalletBalance < fundAmount) {
+    console.error(`\n⚠️ ERROR: Gas wallet has insufficient funds`);
+    console.log(`Required: ${ethers.formatEther(fundAmount)} ETH`);
+    console.log(`Available: ${ethers.formatEther(gasWalletBalance)} ETH`);
+    throw new Error('Insufficient funds in gas wallet');
+  }
+
+  // Transfer funds
+  console.log(`\nTransferring funds to ${operationName.toLowerCase()} wallet...`);
+  const fundingTx = await gasWallet.sendTransaction({
+    to: wallet.address,
+    value: fundAmount
+  });
+
+  console.log(`Funding transaction sent: ${fundingTx.hash}`);
+  console.log(`Waiting for transaction confirmation...`);
+  await fundingTx.wait();
+
+  // Verify the new balance
+  const newBalance = await provider.getBalance(wallet.address);
+  console.log(`New ${operationName.toLowerCase()} wallet balance: ${ethers.formatEther(newBalance)} ETH`);
+
+  if (newBalance < requiredAmount) {
+    throw new Error(`${operationName} wallet still has insufficient funds after transfer`);
+  }
+
+  return wallet;
 }
 
 // =============================================================================
@@ -337,8 +479,8 @@ async function fetchBeneficiaryInheritances(contract, beneficiaryAddress) {
 
 /**
  * Display all inheritances for a beneficiary
- * @param {ethers.Contract} contract Inheritor contract
- * @param {string} beneficiaryAddress Ethereum address of the beneficiary
+ * @param {ethers.Contract} contract - Inheritor contract instance
+ * @param {string} beneficiaryAddress - Ethereum address of the beneficiary (0x...)
  */
 async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
   
@@ -359,18 +501,18 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
       try {
         // For each inheritance ID, fetch additional information
         const details = await getInheritanceDetails(contract, inheritanceId);
-        
+
         // Only display if not revoked
-        if (details.state !== 3) { // 3 = Revoked
+        if (details.state !== INHERITANCE_STATES.REVOKED) {
           console.log(`\n${index}. Inheritance ID: ${inheritanceId}`);
           console.log(`   Testator: ${details.testatorEOA}`);
           console.log(`   State: ${details.stateName}`);
-          
+
           // Only show scheduled transfer time if set
           if (BigInt(details.scheduledTransferTime) > 0n) {
             console.log(`   Scheduled Transfer: ${formatTimestamp(details.scheduledTransferTime)}`);
           }
-          
+
           index++;
         }
       } catch (error) {
@@ -394,13 +536,13 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
 /**
  * Check if an inheritance is claimable by the beneficiary
  * This function verifies claimability and can update the contract state
- * 
- * @param {ethers.Contract} contract Inheritor contract
- * @param {Object} beneficiaryKeys The beneficiary's keys
- * @param {string} inheritanceId The inheritance ID to check
- * @param {ethers.Wallet} signer The gas wallet signer
- * @param {ethers.Provider} provider The network provider
- * @param {string} contractAddress The contract address
+ *
+ * @param {ethers.Contract} contract - Inheritor contract instance
+ * @param {Object} beneficiaryKeys - Object containing {address: string, privateKey: string, publicKey: string}
+ * @param {string} inheritanceId - The inheritance ID to check (0x... format)
+ * @param {ethers.Wallet} signer - Gas wallet signer for funding operations
+ * @param {ethers.Provider} provider - Network provider (JsonRpcProvider)
+ * @param {string} contractAddress - Contract address (0x...)
  */
 async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritanceId, signer, provider, contractAddress) {
   try {
@@ -436,16 +578,16 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
     const beneficiaryContract = new ethers.Contract(contractAddress, INHERITOR_ABI, beneficiaryWallet);
     
     // Check if current state is already claimable
-    if (inheritanceDetails.state === 1) { // 1 = Claimable
+    if (inheritanceDetails.state === INHERITANCE_STATES.CLAIMABLE) {
       console.log('\n✅ This inheritance is already CLAIMABLE!');
       return;
-    } else if (inheritanceDetails.state === 2) { // 2 = Claimed
+    } else if (inheritanceDetails.state === INHERITANCE_STATES.CLAIMED) {
       console.log('\n🔵 This inheritance has already been CLAIMED!');
       return;
-    } else if (inheritanceDetails.state === 3) { // 3 = Revoked
+    } else if (inheritanceDetails.state === INHERITANCE_STATES.REVOKED) {
       console.log('\n🛑 This inheritance has been REVOKED by the testator.');
       return;
-    } else if (inheritanceDetails.state === 4) { // 4 = Purged
+    } else if (inheritanceDetails.state === INHERITANCE_STATES.PURGED) {
       console.log('\n⚪ This inheritance has been PURGED from the system.');
       return;
     }
@@ -456,10 +598,10 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
     try {
       estimatedGas = await beneficiaryContract.isClaimable.estimateGas(inheritanceId);
       // Add buffer
-      estimatedGas = BigInt(Math.floor(Number(estimatedGas) * 1.2)); // 20% buffer
+      estimatedGas = BigInt(Math.floor(Number(estimatedGas) * GAS_CONSTANTS.SAFETY_MULTIPLIER));
     } catch (error) {
       console.log(`Could not estimate gas: ${error.message}`);
-      estimatedGas = BigInt(100000); // Fallback gas limit
+      estimatedGas = BigInt(GAS_CONSTANTS.FALLBACK_GAS_LIMIT); // Fallback gas limit
       console.log(`Using fallback gas limit of ${estimatedGas}`);
     }
     
@@ -540,7 +682,7 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
     console.log('\n=== Updated Inheritance State ===');
     console.log(`Current State: ${updatedDetails.stateName}`);
     
-    if (updatedDetails.state === 1) { // 1 = Claimable
+    if (updatedDetails.state === INHERITANCE_STATES.CLAIMABLE) {
       console.log('\n✅ RESULT: This inheritance is now CLAIMABLE!');
     } else {
       console.log('\n❌ RESULT: This inheritance is NOT YET CLAIMABLE.');
@@ -564,10 +706,10 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
 /**
  * Refund remaining ETH to gas wallet
  * Transfers unused ETH from the beneficiary wallet back to the gas wallet
- * 
- * @param {Object} beneficiaryKeys The beneficiary's keys
- * @param {string} gasWalletAddress The gas wallet address
- * @param {ethers.Provider} provider The network provider
+ *
+ * @param {Object} beneficiaryKeys - Object containing {address: string, privateKey: string, publicKey: string}
+ * @param {string} gasWalletAddress - Gas wallet Ethereum address (0x...)
+ * @param {ethers.Provider} provider - Network provider (JsonRpcProvider)
  */
 async function refundRemainingEth(beneficiaryKeys, gasWalletAddress, provider) {
   try {
@@ -578,8 +720,8 @@ async function refundRemainingEth(beneficiaryKeys, gasWalletAddress, provider) {
     const balance = await provider.getBalance(beneficiaryWallet.address);
     console.log(`\nBeneficiary wallet (${beneficiaryWallet.address}) balance: ${ethers.formatEther(balance)} ETH`);
     
-    // Define minimum refundable amount (0.001 ETH)
-    const minimumRefundable = ethers.parseEther("0.001");
+    // Define minimum refundable amount
+    const minimumRefundable = ethers.parseEther(GAS_CONSTANTS.MIN_REFUNDABLE_AMOUNT);
     
     if (balance <= 0) {
       console.log('No funds to refund.');
@@ -601,7 +743,7 @@ async function refundRemainingEth(beneficiaryKeys, gasWalletAddress, provider) {
     
     // We need to leave some ETH for gas
     const gasPrice = (await provider.getFeeData()).gasPrice;
-    const gasLimit = BigInt(21000); // Standard ETH transfer gas
+    const gasLimit = BigInt(GAS_CONSTANTS.STANDARD_TRANSFER_GAS);
     const gasCost = gasPrice * gasLimit;
     
     console.log(`Estimated gas cost: ${ethers.formatEther(gasCost)} ETH`);
@@ -612,7 +754,7 @@ async function refundRemainingEth(beneficiaryKeys, gasWalletAddress, provider) {
     }
     
     // Calculate refund amount (leave some buffer for gas price fluctuations)
-    const buffer = gasCost * BigInt(12) / BigInt(10); // 20% buffer
+    const buffer = gasCost * BigInt(Math.floor(GAS_CONSTANTS.REFUND_BUFFER_MULTIPLIER * 10)) / BigInt(10);
     const refundAmount = balance - buffer;
     
     console.log(`\nSending ${ethers.formatEther(refundAmount)} ETH back to gas wallet...`);
@@ -655,21 +797,45 @@ async function main() {
   console.log('');
   
   try {
-    // Get beneficiary mnemonic and derive keys
-    const beneficiaryMnemonic = await question('Enter beneficiary recovery phrase (mnemonic): ');
-    const beneficiaryKeys = deriveKeysFromMnemonic(beneficiaryMnemonic);
-    console.log(`Beneficiary address: ${beneficiaryKeys.address}`);
-    
-    // Get gas wallet private key
-    const gasWalletKey = await question('Enter private key of wallet for gas payments: ');
-    
+    // Load beneficiary keys from exported JSON file
+    let beneficiaryKeys;
+    try {
+      beneficiaryKeys = loadBeneficiaryKeysFromFile();
+      console.log(`Beneficiary address: ${beneficiaryKeys.address}`);
+    } catch (keyError) {
+      console.error('\n⚠️  Key Loading Error:');
+      console.error(keyError.message);
+      console.log('\nPlease ensure that:');
+      console.log('1. You have exported your keys from the iOS Inheritor app');
+      console.log('2. The exported JSON file is placed in the ./keys/ directory');
+      console.log('3. The file is named in the format: InheritorKeys_YYYY-MM-DD.json');
+      throw new Error('Failed to load beneficiary keys');
+    }
+
+    // Get gas wallet private key from environment variable
+    let gasWalletKey = process.env.GAS_WALLET_PRIVATE_KEY;
+    if (!gasWalletKey) {
+      console.error('\n⚠️  Environment Variable Error:');
+      console.error('GAS_WALLET_PRIVATE_KEY not found in environment variables.');
+      console.log('\nPlease ensure that:');
+      console.log('1. You have a .env file in the project root directory');
+      console.log('2. The .env file contains: GAS_WALLET_PRIVATE_KEY=...');
+      console.log('3. The private key is 64 hex characters (with or without 0x prefix)');
+      throw new Error('Gas wallet private key not configured');
+    }
+
+    // Normalize gas wallet private key format (add 0x prefix if missing)
+    if (!gasWalletKey.startsWith('0x')) {
+      gasWalletKey = '0x' + gasWalletKey;
+    }
+
     // Validate the gas wallet private key
     let gasWallet;
     try {
       gasWallet = new ethers.Wallet(gasWalletKey);
       console.log(`Gas wallet address: ${gasWallet.address}`);
     } catch (error) {
-      throw new Error('Invalid private key for gas wallet');
+      throw new Error('Invalid private key for gas wallet in .env file (must be 64 hex characters, with or without 0x prefix)');
     }
     
     // Select network

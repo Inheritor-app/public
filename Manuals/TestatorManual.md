@@ -29,10 +29,11 @@ This tool provides a command-line interface for emergency management of your dig
 
 Before using this tool, you'll need:
 
-1. **Recovery Mnemonic**: Your 12 or 24-word recovery phrase for the testator account
+1. **Exported Key File**: Your exported keys from the Inheritor iOS app (InheritorKeys_YYYY-MM-DD.json)
 2. **Gas Wallet Private Key**: A private key for a wallet containing ETH to pay for transaction fees
-3. **Network Information**: Knowledge of which network (Ethereum or Arbitrum) your Digital Will is on
-4. **Internet Connection**: Access to the Ethereum or Arbitrum networks
+3. **Environment Setup**: A .env file configured with your gas wallet private key
+4. **Network Information**: Knowledge of which network (Ethereum or Arbitrum) your Digital Will is on
+5. **Internet Connection**: Access to the Ethereum or Arbitrum networks
 
 ## Installation
 
@@ -56,19 +57,27 @@ This tool requires Node.js, which is NOT included by default in macOS, Windows, 
 
 Once Node.js is installed:
 
-1. Save the script as `Testator.js`
-2. Open a terminal and navigate to the directory containing the script
-3. Install required dependencies:
+1. Navigate to the UserRecovery directory
+2. Install required dependencies:
 
 ```bash
-npm install ethers bip39 @ethersproject/hdnode
+npm install
 ```
 
-4. Make the script executable (macOS/Linux only):
-
+3. Set up environment variables:
 ```bash
-chmod +x Testator.js
+cp .env.example .env
 ```
+Edit the `.env` file and add your gas wallet private key:
+```
+GAS_WALLET_PRIVATE_KEY=your_private_key_here
+```
+Note: Private key can be provided with or without the 0x prefix.
+
+4. Set up testator keys:
+   - Export your keys from the Inheritor iOS app
+   - Place the exported `InheritorKeys_YYYY-MM-DD.json` file in the `./keys/` directory
+   - The script will automatically detect and use the most recent key file
 
 5. To verify Node.js is installed correctly, run:
 ```bash
@@ -81,21 +90,20 @@ This should display the Node.js version (should be 16.0.0 or higher)
 To start the tool, run:
 
 ```bash
-node Testator.js
+node scripts/Testator.js
 ```
 
 ### Initial Setup Process
 
-1. **Enter Testator Recovery Phrase**:
-   - Type your complete mnemonic with all words separated by spaces
-   - Example: `word1 word2 word3 ... word12`
-   - Press Enter after entering all words
-   - The script will display the derived address
+1. **Automatic Key Loading**:
+   - The script automatically loads your testator keys from the exported JSON file
+   - It displays the testator address derived from the key file
+   - If there's an error, it provides helpful instructions for placing the key file correctly
 
-2. **Enter Gas Wallet Private Key**:
-   - Type or paste the private key of your gas wallet (with 0x prefix)
-   - Example: `0x123abc...`
-   - This wallet must contain ETH for transaction fees
+2. **Automatic Gas Wallet Setup**:
+   - The script reads your gas wallet private key from the .env file
+   - It displays the gas wallet address
+   - Ensure this wallet contains sufficient ETH for transaction fees
    - The script will display the wallet address
 
 3. **Select Network**:
