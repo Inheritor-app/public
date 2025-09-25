@@ -140,7 +140,7 @@ This function displays all inheritances designated to your beneficiary address.
 - **Process**:
   - Connects to the blockchain
   - Retrieves inheritance IDs associated with your address
-  - For each inheritance, fetches additional information
+  - Fetches all inheritance details
   - Displays a formatted list with key details
 
 - **Display Information**:

@@ -14,97 +14,30 @@
 require('dotenv').config();
 const { ethers } = require('ethers');
 const readline = require('readline');
-const fs = require('fs');
-const path = require('path');
+const {
+    NETWORK_CONSTANTS,
+    NETWORK_CONFIGS,
+    INHERITANCE_STATES,
+    STATE_NAMES,
+    GAS_CONSTANTS,
+    CONTRACT_ABIS,
+    formatters,
+    contractUtils,
+    networkUtils,
+    errorHandlers,
+    keyUtils,
+    walletUtils
+} = require('./utils/shared-utils');
 
 // =============================================================================
-// Configuration Constants
+// Configuration Constants (now imported from shared-utils)
 // =============================================================================
-
-// Contract & Network Settings
-const PROXY_CONTRACT_ADDRESS = '0x81DA9Fc682d1F8Baf80ebCCe64122A6688E4F37A'; // Only on Ethereum
-const ETHEREUM_CHAIN_ID = 1;
-const ARBITRUM_CHAIN_ID = 42161;
-
-// ABI Fragments for the contracts
-const PROXY_ABI = [
-  'function getContractAddress(uint256 chainId) external view returns (address)'
-];
-
-const INHERITOR_ABI = [
-  'function inheritances(bytes32 inheritanceId) public view returns (address testatorEOA, address testatorSAA, address beneficiaryEOA, address beneficiarySAA, uint256 gracePeriod, uint8 state, bytes32 arweaveTransactionId, uint256 scheduledTransferTime)',
-  'function digitalWill(address testatorEOA, uint256 index) public view returns (bytes32)',
-  'function digitalWill(address) public view returns (bytes32[])',
-  'function testatorLastCheckIn(address) public view returns (uint256)',
-  'function checkInInterval(address) public view returns (uint256)',
-  'function revokeInheritance(bytes32 inheritanceId) external',
-  'function checkIn(uint256 newInterval) public',
-  'function testatorVerifier(address) external view returns (address)',
-  'function updateVerifier(address verifier, uint256 verificationDelay) external',
-  'event AddInheritance(bytes32 indexed inheritanceId, address indexed testatorEOA, address indexed beneficiaryEOA)'
-];
 
 // Create readline interface
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
-
-// Network configurations with fallback RPC endpoints
-const NETWORK_CONFIGS = {
-  ethereum: {
-    name: 'Ethereum Mainnet',
-    chainId: ETHEREUM_CHAIN_ID,
-    publicFallbacks: [
-      'https://eth.llamarpc.com',
-      'https://rpc.ankr.com/eth',
-      'https://cloudflare-eth.com'
-    ]
-  },
-  arbitrum: {
-    name: 'Arbitrum One',
-    chainId: ARBITRUM_CHAIN_ID,
-    publicFallbacks: [
-      'https://arb1.arbitrum.io/rpc',
-      'https://rpc.ankr.com/arbitrum',
-      'https://arbitrum-one.publicnode.com'
-    ]
-  }
-};
-
-// Inheritance state constants
-const INHERITANCE_STATES = {
-  DESIGNATED: 0,
-  CLAIMABLE: 1,
-  CLAIMED: 2,
-  REVOKED: 3,
-  PURGED: 4
-};
-
-// State enum from the contract with readable names and ANSI colors
-// Colors match the iOS implementation:
-// - Designated: green
-// - Claimable: orange/yellow (using yellow for better visibility in terminal)
-// - Claimed: blue
-// - Revoked: red
-// - Purged: gray
-const STATE_NAMES = {
-  [INHERITANCE_STATES.DESIGNATED]: '\x1b[32mDesignated\x1b[0m',   // Green
-  [INHERITANCE_STATES.CLAIMABLE]: '\x1b[33mClaimable\x1b[0m',    // Yellow (for orange)
-  [INHERITANCE_STATES.CLAIMED]: '\x1b[34mClaimed\x1b[0m',      // Blue
-  [INHERITANCE_STATES.REVOKED]: '\x1b[31mRevoked\x1b[0m',      // Red
-  [INHERITANCE_STATES.PURGED]: '\x1b[90mPurged\x1b[0m'        // Gray
-};
-
-// Gas estimation and funding constants
-const GAS_CONSTANTS = {
-  SAFETY_MULTIPLIER: 5,           // 5x multiplier for gas estimates
-  FUNDING_MULTIPLIER: 10,         // 10x multiplier for funding amounts
-  REFUND_BUFFER_MULTIPLIER: 1.2,  // 20% buffer for refunds
-  FALLBACK_GAS_AMOUNT: "0.001",   // Fallback gas estimate in ETH
-  MIN_REFUNDABLE_AMOUNT: "0.001", // Minimum amount worth refunding
-  STANDARD_TRANSFER_GAS: 21000    // Standard ETH transfer gas limit
-};
 
 // =============================================================================
 // User Interface & Helper Functions
@@ -119,111 +52,12 @@ function question(query) {
   return new Promise(resolve => rl.question(query, resolve));
 }
 
-/**
- * Load testator keys from exported JSON key file
- * @returns {Object} Object containing address, privateKey, and publicKey
- */
-function loadTestatorKeysFromFile() {
-  const keysDir = path.join(__dirname, '..', 'keys');
+// Key loading function now uses shared utility
+const loadTestatorKeysFromFile = keyUtils.loadTestatorKeysFromFile;
 
-  // Check if keys directory exists
-  if (!fs.existsSync(keysDir)) {
-    throw new Error(`Keys directory not found at ${keysDir}. Please create the directory and place your exported key file there.`);
-  }
-
-  // Find InheritorKeys_*.json files
-  const files = fs.readdirSync(keysDir).filter(file =>
-    file.startsWith('InheritorKeys_') && file.endsWith('.json')
-  );
-
-  if (files.length === 0) {
-    throw new Error(`No InheritorKeys_*.json files found in ${keysDir}. Please export your keys from the iOS app and place the file there.`);
-  }
-
-  // Use the most recent file (lexicographically, which works for YYYY-MM-DD format)
-  const keyFile = files.sort().reverse()[0];
-  const keyFilePath = path.join(keysDir, keyFile);
-
-  console.log(`Loading keys from: ${keyFile}`);
-
-  try {
-    // Read and parse the JSON file
-    const keyFileContent = fs.readFileSync(keyFilePath, 'utf8');
-    const keyData = JSON.parse(keyFileContent);
-
-    // Validate the JSON structure
-    if (!keyData.testator || !keyData.testator.ethereum) {
-      throw new Error('Invalid key file format: missing testator.ethereum section');
-    }
-
-    const testatorEthKeys = keyData.testator.ethereum;
-
-    // Validate required fields
-    if (!testatorEthKeys.address || !testatorEthKeys.privateKey) {
-      throw new Error('Invalid key file format: missing address or privateKey');
-    }
-
-    // Validate address format
-    if (!ethers.isAddress(testatorEthKeys.address)) {
-      throw new Error('Invalid address format in key file');
-    }
-
-    // Normalize private key format (add 0x prefix if missing)
-    let privateKey = testatorEthKeys.privateKey;
-    if (!privateKey.startsWith('0x')) {
-      privateKey = '0x' + privateKey;
-    }
-
-    // Validate private key format (should be 66 characters with 0x prefix, or 64 without)
-    if (privateKey.length !== 66 || !privateKey.startsWith('0x')) {
-      throw new Error('Invalid private key format in key file (must be 64 hex characters, with or without 0x prefix)');
-    }
-
-    // Verify the private key matches the address
-    const wallet = new ethers.Wallet(privateKey);
-    if (wallet.address.toLowerCase() !== testatorEthKeys.address.toLowerCase()) {
-      throw new Error('Private key does not match address in key file');
-    }
-
-    return {
-      address: testatorEthKeys.address,
-      privateKey: privateKey, // Return normalized private key with 0x prefix
-      publicKey: wallet.publicKey
-    };
-
-  } catch (error) {
-    if (error.message.includes('JSON')) {
-      throw new Error(`Failed to parse key file: ${error.message}`);
-    }
-    throw error;
-  }
-}
-
-/**
- * Format duration in seconds to a readable string
- * @param {number|bigint} seconds Time duration in seconds
- * @returns {string} Formatted duration string
- */
-function formatDuration(seconds) {
-  // Convert BigInt to Number if needed
-  const secs = typeof seconds === 'bigint' ? Number(seconds) : Number(seconds);
-  
-  if (secs < 60) return `${secs} seconds`;
-  if (secs < 3600) return `${Math.floor(secs / 60)} minutes`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)} hours`;
-  return `${Math.floor(secs / 86400)} days`;
-}
-
-/**
- * Format timestamp to a readable date and time
- * @param {number|bigint} timestamp Unix timestamp in seconds
- * @returns {string} Formatted date and time
- */
-function formatTimestamp(timestamp) {
-  // Convert BigInt to Number if needed
-  const ts = typeof timestamp === 'bigint' ? Number(timestamp) : Number(timestamp);
-  return new Date(ts * 1000).toLocaleString();
-}
+// Formatting functions now use shared utilities
+const formatDuration = formatters.formatDuration;
+const formatTimestamp = formatters.formatTimestamp;
 
 /**
  * Ensures a wallet has sufficient funds for operations, transferring from gas wallet if needed
@@ -234,258 +68,53 @@ function formatTimestamp(timestamp) {
  * @param {string} operationName - Name of operation for user messages
  * @returns {Promise<ethers.Wallet>} Funded wallet instance
  */
-async function ensureWalletFunding(walletKeys, gasWallet, provider, requiredAmount, operationName) {
-  // Create wallet instance
-  const wallet = new ethers.Wallet(walletKeys.privateKey, provider);
-
-  // Check current balance
-  const currentBalance = await provider.getBalance(wallet.address);
-  console.log(`${operationName} wallet balance: ${ethers.formatEther(currentBalance)} ETH`);
-
-  // Check if funding is needed
-  if (currentBalance >= requiredAmount) {
-    return wallet; // Already has sufficient funds
-  }
-
-  console.log(`\n${operationName} wallet needs funding for gas.`);
-
-  // Calculate funding amount with safety buffer
-  const fundAmount = requiredAmount * BigInt(GAS_CONSTANTS.FUNDING_MULTIPLIER);
-
-  const fundConfirmation = await question(
-    `Do you want to transfer ${ethers.formatEther(fundAmount)} ETH from gas wallet to ${operationName.toLowerCase()} wallet? (yes/no): `
-  );
-
-  if (fundConfirmation.toLowerCase() !== 'yes') {
-    throw new Error(`${operationName} cancelled: wallet needs ETH for gas`);
-  }
-
-  // Check gas wallet balance
-  const gasWalletBalance = await provider.getBalance(gasWallet.address);
-  console.log(`Gas wallet balance: ${ethers.formatEther(gasWalletBalance)} ETH`);
-
-  if (gasWalletBalance < fundAmount) {
-    console.error(`\n⚠️ ERROR: Gas wallet has insufficient funds`);
-    console.log(`Required: ${ethers.formatEther(fundAmount)} ETH`);
-    console.log(`Available: ${ethers.formatEther(gasWalletBalance)} ETH`);
-    console.log(`\nPlease fund your gas wallet with at least ${ethers.formatEther(fundAmount - gasWalletBalance)} more ETH to continue.`);
-    throw new Error('Insufficient funds in gas wallet');
-  }
-
-  // Transfer funds
-  console.log(`\nTransferring funds to ${operationName.toLowerCase()} wallet...`);
-  const fundingTx = await gasWallet.sendTransaction({
-    to: wallet.address,
-    value: fundAmount
-  });
-
-  console.log(`Funding transaction sent: ${fundingTx.hash}`);
-  console.log(`Waiting for transaction confirmation...`);
-  await fundingTx.wait();
-
-  // Verify the new balance
-  const newBalance = await provider.getBalance(wallet.address);
-  console.log(`New ${operationName.toLowerCase()} wallet balance: ${ethers.formatEther(newBalance)} ETH`);
-
-  if (newBalance < requiredAmount) {
-    throw new Error(`${operationName} wallet still has insufficient funds after transfer`);
-  }
-
-  return wallet;
-}
+// Wallet funding function now uses shared utility
+const ensureWalletFunding = (walletKeys, gasWallet, provider, requiredAmount, operationName) =>
+  walletUtils.ensureWalletFunding(walletKeys, gasWallet, provider, requiredAmount, operationName, question);
 
 // =============================================================================
 // Blockchain & Network Functions
 // =============================================================================
 
-/**
- * Set up an Ethereum provider with retry logic
- * Attempts to connect to user-specified or public RPC endpoints
- * 
- * @param {Object} networkConfig Network configuration object
- * @returns {Promise<JsonRpcProvider>} Connected provider
- */
-async function setupProvider(networkConfig) {
-  console.log('\nRPC Configuration:');
-  console.log('1. Enter custom RPC URL (recommended: Infura, Alchemy, etc.)');
-  console.log('2. Use public RPC endpoints (may be less reliable)');
-  const rpcChoice = await question('Your choice (1-2): ');
-  
-  let rpcUrl;
-  if (rpcChoice === '1') {
-    rpcUrl = await question(`Enter RPC URL for ${networkConfig.name}: `);
-  } else {
-    console.log('Trying public RPC endpoints...');
-    rpcUrl = networkConfig.publicFallbacks[0];
-    console.log(`Using: ${rpcUrl}`);
-  }
-  
-  // Set up provider with retry logic
-  let provider;
-  let attempts = 0;
-  let connected = false;
-  
-  while (!connected && attempts < 3) {
-    try {
-      console.log(`Connecting to ${rpcUrl}...`);
-      provider = new ethers.JsonRpcProvider(rpcUrl);
-      
-      // Test the connection
-      await provider.getBlockNumber();
-      connected = true;
-      console.log('Connection successful!');
-    } catch (error) {
-      attempts++;
-      console.log(`Connection failed: ${error.message}`);
-      
-      if (attempts < 3 && networkConfig.publicFallbacks.length > attempts) {
-        rpcUrl = networkConfig.publicFallbacks[attempts];
-        console.log(`Trying alternative endpoint: ${rpcUrl}`);
-      } else if (attempts >= 3) {
-        throw new Error('Failed to connect to any RPC endpoint. Please try again with a custom URL from Infura or Alchemy.');
-      }
-    }
-  }
-  
-  // Verify we're connected to the chosen network
-  const network = await provider.getNetwork();
-  console.log(`Connected to network: ${network.name} (Chain ID: ${network.chainId})`);
-  
-  if (network.chainId !== BigInt(networkConfig.chainId)) {
-    throw new Error(`Provider connected to wrong network. Expected chain ID ${networkConfig.chainId}, got ${network.chainId}`);
-  }
-  
-  return provider;
-}
+// Provider setup function now uses shared utility
+const setupProvider = (networkConfig) => networkUtils.setupProvider(networkConfig, question);
 
-/**
- * Get contract address from Ethereum proxy for any chain
- * @param {JsonRpcProvider} provider Ethereum provider
- * @param {number} targetChainId Target chain ID
- * @returns {Promise<string>} Contract address
- */
-async function getContractAddressFromProxy(provider, targetChainId) {
-  console.log(`Retrieving ${targetChainId === ETHEREUM_CHAIN_ID ? 'Ethereum' : 'Arbitrum'} contract address from proxy...`);
-  
-  // First ensure we're connected to Ethereum where the proxy is deployed
-  const network = await provider.getNetwork();
-  const isEthereumProvider = network.chainId === BigInt(ETHEREUM_CHAIN_ID);
-  
-  if (!isEthereumProvider) {
-    throw new Error("Must use an Ethereum provider to access the proxy contract");
-  }
-  
-  // Check if proxy contract exists at the address
-  const code = await provider.getCode(PROXY_CONTRACT_ADDRESS);
-  if (code === '0x') {
-    throw new Error(`No contract found at proxy address ${PROXY_CONTRACT_ADDRESS}`);
-  }
-  
-  const proxyContract = new ethers.Contract(
-    PROXY_CONTRACT_ADDRESS,
-    PROXY_ABI,
-    provider
-  );
-  
-  const contractAddress = await proxyContract.getContractAddress(targetChainId);
-  
-  // Check if the contract is in maintenance mode (address is 0x0)
-  if (contractAddress === '0x0000000000000000000000000000000000000000') {
-    throw new Error(`Contract on chain ID ${targetChainId} is currently in maintenance mode.`);
-  }
-  
-  return contractAddress;
-}
+// Contract address functions now use shared utilities
+const getContractAddressFromProxy = networkUtils.getContractAddressFromProxy;
 
-/**
- * Get contract address for network
- * @param {JsonRpcProvider} provider Provider for the network
- * @param {Object} networkConfig Network configuration
- * @returns {Promise<string>} Contract address
- */
-async function getContractAddressForNetwork(provider, networkConfig) {
-  let contractAddress;
-  let ethProvider;
-  
-  try {
-    // If we're already on Ethereum, use the current provider
-    if (networkConfig.chainId === ETHEREUM_CHAIN_ID) {
-      ethProvider = provider;
-    } else {
-      // If we're on Arbitrum, we need a separate Ethereum provider to query the proxy
-      console.log('\nCreating separate Ethereum connection to query proxy contract...');
-      
-      // Try to use a public Ethereum endpoint
-      for (const rpcUrl of NETWORK_CONFIGS.ethereum.publicFallbacks) {
-        try {
-          ethProvider = new ethers.JsonRpcProvider(rpcUrl);
-          // Test the connection
-          await ethProvider.getBlockNumber();
-          console.log(`Connected to Ethereum via ${rpcUrl}`);
-          break;
-        } catch (error) {
-          console.log(`Failed to connect to Ethereum via ${rpcUrl}: ${error.message}`);
-        }
-      }
-      
-      // If we couldn't connect to any public endpoint
-      if (!ethProvider) {
-        console.log('\nFailed to connect to any public Ethereum endpoint.');
-        const ethRpcUrl = await question('Please enter an Ethereum RPC URL: ');
-        ethProvider = new ethers.JsonRpcProvider(ethRpcUrl);
-        
-        // Test the connection
-        try {
-          await ethProvider.getBlockNumber();
-          console.log('Connected to Ethereum successfully!');
-        } catch (error) {
-          throw new Error(`Failed to connect to Ethereum: ${error.message}`);
-        }
-      }
-    }
-    
-    // Now that we have an Ethereum provider, query the proxy contract
-    contractAddress = await getContractAddressFromProxy(ethProvider, networkConfig.chainId);
-    console.log(`Contract address for ${networkConfig.name}: ${contractAddress}`);
-    
-  } catch (error) {
-    console.error(`\nError getting contract address from proxy: ${error.message}`);
-    console.log('Falling back to manual entry mode.');
-    contractAddress = await question(`Please enter the Inheritor contract address for ${networkConfig.name}: `);
-    if (!ethers.isAddress(contractAddress)) {
-      throw new Error('Invalid contract address format');
-    }
-  }
-  
-  return contractAddress;
-}
+// Contract address for network function now uses shared utility
+const getContractAddressForNetwork = (provider, networkConfig) =>
+  networkUtils.getContractAddressForNetwork(provider, networkConfig, question);
 
 // =============================================================================
 // Inheritance Query Functions
 // =============================================================================
 
 /**
- * Get all inheritances for a testator using event logs
+ * Get all inheritances for a testator using optimized event logs with deployment block
  * @param {ethers.Contract} contract Inheritor contract
  * @param {string} testatorAddress Testator's address
  * @returns {Promise<Array<string>>} Array of inheritance IDs
  */
 async function getTestatorInheritances(contract, testatorAddress) {
   console.log(`Searching for inheritances via events for ${testatorAddress}...`);
-  
+
   try {
+    // Get deployment block to optimize query range
+    const startBlock = await contractUtils.getDeploymentBlockForContract(contract);
+
     // Create a filter for AddInheritance events where testatorEOA is our address
     const filter = contract.filters.AddInheritance(null, testatorAddress, null);
-    
-    // Query all matching events
+
+    // Query all matching events with optimized block range
     console.log('Fetching event logs...');
-    const events = await contract.queryFilter(filter);
-    
+    const events = await contract.queryFilter(filter, startBlock, 'latest');
+
     // Extract the inheritance IDs from the events
     return events.map(event => event.args.inheritanceId);
   } catch (error) {
     console.error(`Error fetching inheritances via events: ${error.message}`);
-    
+
     // Fall back to direct mapping access as a last resort
     console.log('Attempting fallback method...');
     return getInheritancesViaMapping(contract, testatorAddress);
@@ -523,6 +152,58 @@ async function getInheritancesViaMapping(contract, testatorAddress) {
 }
 
 /**
+ * Fallback method for viewDigitalWill when exportContractForMigration fails
+ * @param {ethers.Contract} contract - Inheritor contract instance
+ * @param {string} testatorAddress - Testator's Ethereum address
+ */
+async function viewDigitalWillFallback(contract, testatorAddress) {
+  // Always get fresh inheritance IDs from blockchain
+  const inheritanceIds = await getTestatorInheritances(contract, testatorAddress);
+
+  if (inheritanceIds.length === 0) {
+    console.log('No inheritances found for this testator.');
+    return;
+  }
+
+  console.log(`Found ${inheritanceIds.length} inheritance(s).`);
+
+  // Get current check-in information
+  const lastCheckIn = await contract.testatorLastCheckIn(testatorAddress);
+  const checkInInterval = await contract.checkInInterval(testatorAddress);
+
+  // Display check-in information
+  console.log('\n=== Check-in Information ===');
+  console.log(`Last Check-in: ${formatTimestamp(lastCheckIn)}`);
+  console.log(`Check-in Interval: ${formatDuration(checkInInterval)}`);
+
+  // Safely calculate next check-in
+  const nextCheckInTime = lastCheckIn + checkInInterval;
+  console.log(`Next Check-in Due: ${formatTimestamp(nextCheckInTime)}`);
+
+  // Get details for each inheritance
+  console.log('\n=== Inheritances ===');
+
+  for (const id of inheritanceIds) {
+    // Get fresh details from blockchain
+    const details = await getInheritanceDetails(contract, id);
+
+    // Skip displaying purged inheritances
+    if (details.state === INHERITANCE_STATES.PURGED) {
+      continue;
+    }
+
+    console.log(`\nInheritance ID: ${id}`);
+    console.log(`State: ${details.stateName}`);
+    console.log(`Beneficiary: ${details.beneficiaryEOA}`);
+    console.log(`Grace Period: ${formatDuration(details.gracePeriod)}`);
+
+    if (BigInt(details.scheduledTransferTime) > 0n) {
+      console.log(`Scheduled Transfer: ${formatTimestamp(details.scheduledTransferTime)}`);
+    }
+  }
+}
+
+/**
  * Load inheritance details from the contract
  * @param {ethers.Contract} contract Inheritor contract
  * @param {string} inheritanceId Inheritance ID
@@ -549,7 +230,7 @@ async function getInheritanceDetails(contract, inheritanceId) {
 // =============================================================================
 
 /**
- * View Digital Will function
+ * View Digital Will function - Optimized with exportContractForMigration
  * Fetches and displays all inheritances and check-in information
  *
  * @param {ethers.Contract} contract - Inheritor contract instance
@@ -557,52 +238,75 @@ async function getInheritanceDetails(contract, inheritanceId) {
  */
 async function viewDigitalWill(contract, testatorAddress) {
   console.log(`\nFetching digital will information for ${testatorAddress}...`);
-  
-  // Always get fresh inheritance IDs from blockchain
-  const inheritanceIds = await getTestatorInheritances(contract, testatorAddress);
-  
-  if (inheritanceIds.length === 0) {
-    console.log('No inheritances found for this testator.');
-    return;
-  }
-  
-  console.log(`Found ${inheritanceIds.length} inheritance(s).`);
-  
-  // Get current check-in information
-  const lastCheckIn = await contract.testatorLastCheckIn(testatorAddress);
-  const checkInInterval = await contract.checkInInterval(testatorAddress);
-  
-  // Display check-in information
-  console.log('\n=== Check-in Information ===');
-  console.log(`Last Check-in: ${formatTimestamp(lastCheckIn)}`);
-  console.log(`Check-in Interval: ${formatDuration(checkInInterval)}`);
-  
-  // Safely calculate next check-in
-  const nextCheckInTime = lastCheckIn + checkInInterval;
-  console.log(`Next Check-in Due: ${formatTimestamp(nextCheckInTime)}`);
-  
-  // Get details for each inheritance
-  console.log('\n=== Inheritances ===');
-  
-  for (const id of inheritanceIds) {
-    // Get fresh details from blockchain
-    const details = await getInheritanceDetails(contract, id);
-    
-    // Skip displaying purged inheritances
-    if (details.state === INHERITANCE_STATES.PURGED) {
-      continue;
+
+  try {
+    // First, get all inheritance IDs from optimized events
+    const inheritanceIds = await getTestatorInheritances(contract, testatorAddress);
+
+    if (inheritanceIds.length === 0) {
+      console.log('No inheritances found for this testator.');
+      return;
     }
-    
-    console.log(`\nInheritance ID: ${id}`);
-    console.log(`State: ${details.stateName}`);
-    console.log(`Beneficiary: ${details.beneficiaryEOA}`);
-    console.log(`Grace Period: ${formatDuration(details.gracePeriod)}`);
-    
-    if (BigInt(details.scheduledTransferTime) > 0n) {
-      console.log(`Scheduled Transfer: ${formatTimestamp(details.scheduledTransferTime)}`);
+
+    console.log(`Found ${inheritanceIds.length} inheritance(s). Fetching complete data...`);
+
+    // Use exportContractForMigration to get all data in one call
+    const migrationData = await contract.exportContractForMigration(inheritanceIds);
+
+    // Find the testator's data in the migration results
+    let testatorIndex = -1;
+    for (let i = 0; i < migrationData.testators.length; i++) {
+      if (migrationData.testators[i].toLowerCase() === testatorAddress.toLowerCase()) {
+        testatorIndex = i;
+        break;
+      }
     }
+
+    if (testatorIndex >= 0) {
+      // Display check-in information from migration data
+      const lastCheckIn = Number(migrationData.lastCheckIns[testatorIndex]);
+      const checkInInterval = Number(migrationData.checkInIntervals[testatorIndex]);
+
+      console.log('\n=== Check-in Information ===');
+      console.log(`Last Check-in: ${formatTimestamp(lastCheckIn)}`);
+      console.log(`Check-in Interval: ${formatDuration(checkInInterval)}`);
+
+      // Safely calculate next check-in
+      const nextCheckInTime = lastCheckIn + checkInInterval;
+      console.log(`Next Check-in Due: ${formatTimestamp(nextCheckInTime)}`);
+    } else {
+      console.log('\n⚠️  Warning: Could not find check-in information in migration data');
+    }
+
+    // Process and display inheritances from migration data
+    const inheritances = contractUtils.processMigrationDataToInheritances(migrationData);
+
+    console.log('\n=== Inheritances ===');
+
+    for (const inheritance of inheritances) {
+      // Skip displaying purged inheritances
+      if (inheritance.state === INHERITANCE_STATES.PURGED) {
+        continue;
+      }
+
+      console.log(`\nInheritance ID: ${inheritance.id}`);
+      console.log(`State: ${inheritance.stateName}`);
+      console.log(`Beneficiary: ${inheritance.beneficiaryEOA}`);
+      console.log(`Grace Period: ${formatDuration(inheritance.gracePeriod)}`);
+
+      if (BigInt(inheritance.scheduledTransferTime) > 0n) {
+        console.log(`Scheduled Transfer: ${formatTimestamp(inheritance.scheduledTransferTime)}`);
+      }
+    }
+
+  } catch (error) {
+    console.error('\n⚠️  Error fetching digital will data:', error.message);
+    console.log('Falling back to individual queries...');
+
+    // Fallback to original method if exportContractForMigration fails
+    await viewDigitalWillFallback(contract, testatorAddress);
   }
-  
+
   // Wait for user acknowledgment
   await question('\nPress Enter to return to the main menu...');
 }
@@ -627,20 +331,29 @@ async function revokeAllInheritances(contract, testatorKeys, signer, provider, c
   
   try {
     console.log('Revoking all inheritances...');
-    
-    // Always get fresh inheritance data from blockchain
+
+    // Always get fresh inheritance data from blockchain using optimized method
     const inheritanceIds = await getTestatorInheritances(contract, testatorKeys.address);
-    
+
     if (inheritanceIds.length === 0) {
       console.log('No inheritances found to revoke.');
       return;
     }
-    
-    // Get details for each inheritance
-    const inheritances = [];
-    for (const id of inheritanceIds) {
-      const details = await getInheritanceDetails(contract, id);
-      inheritances.push(details);
+
+    // Use exportContractForMigration to get all inheritance details in one call
+    let inheritances = [];
+    try {
+      console.log('Fetching inheritance details using exportContractForMigration...');
+      const migrationData = await contract.exportContractForMigration(inheritanceIds);
+      inheritances = contractUtils.processMigrationDataToInheritances(migrationData);
+      console.log(`✅ Successfully loaded ${inheritances.length} inheritance details`);
+    } catch (migrationError) {
+      console.log('⚠️ exportContractForMigration failed, falling back to individual queries...');
+      // Fallback to individual queries
+      for (const id of inheritanceIds) {
+        const details = await getInheritanceDetails(contract, id);
+        inheritances.push(details);
+      }
     }
     
     // Create testator wallet for signing revocation transactions
@@ -648,7 +361,7 @@ async function revokeAllInheritances(contract, testatorKeys, signer, provider, c
     console.log(`Using testator wallet: ${testatorWallet.address}`);
     
     // Create a contract instance with the testator's wallet
-    const testatorContract = new ethers.Contract(contractAddress, INHERITOR_ABI, testatorWallet);
+    const testatorContract = new ethers.Contract(contractAddress, CONTRACT_ABIS.INHERITOR_ABI, testatorWallet);
     
     // Check testator wallet balance
     const testatorBalance = await provider.getBalance(testatorWallet.address);
@@ -816,7 +529,7 @@ async function performCheckIn(testatorKeys, signer, provider, contractAddress) {
     console.log(`Testator wallet balance: ${ethers.formatEther(testatorBalance)} ETH`);
     
     // Estimate gas needed for the check-in
-    const testatorContract = new ethers.Contract(contractAddress, INHERITOR_ABI, testatorWallet);
+    const testatorContract = new ethers.Contract(contractAddress, CONTRACT_ABIS.INHERITOR_ABI, testatorWallet);
     const estimatedGas = await testatorContract.checkIn.estimateGas(0);
     const gasBuffer = BigInt(Math.floor(Number(estimatedGas) * 1.2)); // 20% buffer
     
@@ -941,7 +654,7 @@ async function removeVerifier(testatorKeys, signer, provider, contractAddress) {
     console.log(`Using testator wallet: ${testatorWallet.address}`);
     
     // Create contract instance with testator wallet - like in performCheckIn
-    const testatorContract = new ethers.Contract(contractAddress, INHERITOR_ABI, testatorWallet);
+    const testatorContract = new ethers.Contract(contractAddress, CONTRACT_ABIS.INHERITOR_ABI, testatorWallet);
     
     // Get current verifier - using our testatorContract
     console.log('\nChecking current verifier...');
@@ -1226,7 +939,7 @@ async function main() {
     if (code === '0x') {
       throw new Error(`No contract found at address ${contractAddress}`);
     }
-    const contract = new ethers.Contract(contractAddress, INHERITOR_ABI, signer);
+    const contract = new ethers.Contract(contractAddress, CONTRACT_ABIS.INHERITOR_ABI, signer);
     
     // Create testator wallet with provider
     const testatorWallet = new ethers.Wallet(testatorKeys.privateKey, provider);

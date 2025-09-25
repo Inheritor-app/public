@@ -143,7 +143,7 @@ This function fetches and displays all your inheritance information and check-in
 
 - **Process**:
   - Connects to the blockchain
-  - Retrieves all inheritance records associated with your address
+  - Retrieves all inheritance records
   - Shows check-in information (last check-in, interval, next due date)
   - Lists all active inheritances with details
 

@@ -25,6 +25,8 @@ With this tool, you can:
 
 This tool is intended for use when an inheritance has reached the "Claimable" state, allowing you to claim and access the inherited asset securely.
 
+**Note**: This tool works alongside the Beneficiary Check Tool for verifying inheritance status.
+
 ## Before You Begin
 
 Before using this tool, you'll need:

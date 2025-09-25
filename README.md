@@ -8,7 +8,7 @@ Inheritor is a blockchain-based solution for creating digital wills that securel
 
 ```
 UserRecovery/
-├── Inheritor - Whitepaper.md
+├── Inheritor - WhitePaper.md
 ├── Manuals/
 │   ├── CheckClaimable.md
 │   ├── ClaimManual.md
@@ -21,6 +21,8 @@ UserRecovery/
 ├── package-lock.json
 ├── package.json
 └── scripts/
+    ├── utils/
+    │   └── shared-utils.js        # Centralized utilities
     ├── Beneficiary_CheckClaimable.js
     ├── Beneficiary_Claim.js
     └── Testator.js
@@ -101,6 +103,91 @@ Inheritor uses a combination of technologies to provide secure digital inheritan
 - **Symmetric Encryption**: AES-GCM for asset encryption and decryption
 
 The system creates a cryptographically secure time-lock mechanism where assets can only be accessed by beneficiaries when specific conditions (like testator inactivity) are met.
+
+## Technical Implementation: Shared Utilities & Performance Optimizations
+
+### Architecture Overview
+
+The emergency management tools have been refactored to improve performance, reliability, and maintainability through the implementation of shared utilities and optimized blockchain interaction patterns.
+
+#### Shared Utilities Module
+
+Location: `/scripts/utils/shared-utils.js`
+
+This centralized module provides common functionality across all emergency management scripts:
+
+**Key Components:**
+1. **Network & Contract Constants** - Ethereum and Arbitrum chain IDs, proxy contract addresses, network configurations
+2. **Contract ABIs** - Comprehensive Inheritor contract ABI including `exportContractForMigration()` for batch data retrieval
+3. **Utility Functions** - Formatting, contract utilities, network setup, key management, wallet operations, and error handling
+
+#### Performance Optimizations
+
+**Batch Data Retrieval:**
+- **Before**: Multiple individual calls (N+1 blockchain calls)
+- **After**: Single batch call using `exportContractForMigration()` (2 blockchain calls)
+- **Result**: 50-90% reduction in blockchain queries, faster data loading, lower RPC rate limiting exposure
+
+**Deployment Block Optimization:**
+- Automatically detects contract deployment block by finding earliest event
+- Caches deployment blocks to avoid repeated lookups
+- Uses optimized block range for event queries instead of scanning from block 0
+
+**Caching Mechanisms:**
+- Global deployment block cache prevents repeated blockchain queries
+- Improves performance for repeated operations
+- Reduces blockchain network load
+
+#### Code Quality Improvements
+
+**Centralized Configuration:**
+All constants and configurations are centralized in `shared-utils.js` including network configurations, gas estimation constants, inheritance state mappings, and error handling.
+
+**Modular Architecture:**
+Each utility category is separated into focused modules:
+- `formatters` - Display formatting functions
+- `contractUtils` - Blockchain interaction utilities
+- `networkUtils` - Network setup and configuration
+- `keyUtils` - Cryptographic key management
+- `walletUtils` - Wallet operations and funding
+
+#### Scripts Refactored
+
+**Testator.js ✅ Complete**
+- `viewDigitalWill()`: Batch inheritance data retrieval
+- `revokeAllInheritances()`: Optimized inheritance state checking
+- Event queries use deployment block optimization
+
+**Beneficiary_CheckClaimable.js ✅ Complete**
+- `displayBeneficiaryInheritances()`: Batch data retrieval with `exportContractForMigration()`
+- Enhanced error handling with graceful fallbacks
+- Shared utility integration for consistency
+
+**Beneficiary_Claim.js ⏳ Future Enhancement**
+- Not yet refactored - operates independently
+- Can be enhanced with shared utilities in future iterations
+
+#### File Structure Update
+
+```
+UserRecovery/
+├── scripts/
+│   ├── utils/
+│   │   └── shared-utils.js          # Centralized utilities
+│   ├── Testator.js                  # Optimized testator tool
+│   ├── Beneficiary_CheckClaimable.js # Optimized beneficiary check tool
+│   └── Beneficiary_Claim.js         # Original claim tool
+├── Manuals/                         # User-facing documentation
+└── keys/                           # User key files (unchanged)
+```
+
+#### Backward Compatibility
+
+The refactored scripts maintain full compatibility with:
+- Existing key file formats
+- Environment variable configurations
+- Command-line interfaces
+- All original functionality
 
 ## Installation
 
