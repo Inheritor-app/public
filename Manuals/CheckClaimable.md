@@ -16,18 +16,22 @@
 
 The Inheritor Beneficiary Check Tool allows beneficiaries to monitor and interact with their digital inheritances before claiming them. This tool provides visibility into inheritance status and can trigger state changes to make inheritances claimable when appropriate conditions are met.
 
+The tool works with the quantum-safe Inheritor system that uses advanced post-quantum cryptography (ML-KEM-768) to ensure your inheritances remain secure against future quantum computing threats. While this tool focuses on status checking and management functions, it's designed to work seamlessly with the quantum-safe architecture.
+
 With this tool, you can:
 - View all inheritances designated to your beneficiary address
 - Check if specific inheritances are claimable (and potentially trigger state changes)
 - Refund unused ETH from your beneficiary wallet to your gas wallet
 
-This tool is designed as a companion to the Beneficiary Claim Tool, helping you verify when inheritances become available for claiming.
+This tool is designed as a companion to the Beneficiary Claim Tool, helping you verify when inheritances become available for claiming using quantum-resistant cryptography.
 
 ## Before You Begin
 
 Before using this tool, you'll need:
 
 1. **Exported Key File**: Your exported keys from the Inheritor iOS app (InheritorKeys_YYYY-MM-DD.json)
+   - Contains both Ethereum private keys and ML-KEM-768 quantum-safe keys
+   - Required for beneficiary address derivation and future quantum-safe claiming
 2. **Gas Wallet Private Key**: A private key for a wallet containing ETH to pay for transaction fees
 3. **Environment Setup**: A .env file configured with your gas wallet private key
 4. **Network Information**: Knowledge of which network (Ethereum or Arbitrum) to connect to
@@ -74,9 +78,10 @@ GAS_WALLET_PRIVATE_KEY=your_private_key_here
 Note: Private key can be provided with or without the 0x prefix.
 
 4. Set up beneficiary keys:
-   - Export your keys from the Inheritor iOS app
+   - Export your keys from the Inheritor iOS app (includes both Ethereum and ML-KEM-768 quantum keys)
    - Place the exported `InheritorKeys_YYYY-MM-DD.json` file in the `./keys/` directory
    - The script will automatically detect and use the most recent key file
+   - Note: The key file contains quantum-safe cryptographic keys for future-proof inheritance claiming
 
 5. To verify Node.js is installed correctly, run:
 ```bash

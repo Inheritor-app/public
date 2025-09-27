@@ -16,6 +16,8 @@
 
 The Inheritor Emergency Management Tool is designed as a failsafe mechanism that provides testators direct control over their digital inheritance smart contracts. This tool should only be used in emergency situations when normal access methods are unavailable, or when you need to perform critical operations directly.
 
+The tool works with the quantum-safe Inheritor system that uses advanced post-quantum cryptography (ML-KEM-768) to ensure your inheritances remain secure against future quantum computing threats. While this tool focuses on management and administrative functions, it operates within the quantum-safe architecture framework.
+
 With this tool, you can:
 - View your Digital Will information (all inheritances and check-in status)
 - Perform a check-in to reset inheritance timers
@@ -23,13 +25,15 @@ With this tool, you can:
 - Remove verifiers from your Digital Will
 - Return unused ETH to your gas wallet
 
-This tool provides a command-line interface for emergency management of your digital inheritances without requiring the full mobile application.
+This tool provides a command-line interface for emergency management of your quantum-safe digital inheritances without requiring the full mobile application.
 
 ## Before You Begin
 
 Before using this tool, you'll need:
 
 1. **Exported Key File**: Your exported keys from the Inheritor iOS app (InheritorKeys_YYYY-MM-DD.json)
+   - Contains both Ethereum private keys and ML-KEM-768 quantum-safe keys
+   - Required for testator address derivation and quantum-safe inheritance management
 2. **Gas Wallet Private Key**: A private key for a wallet containing ETH to pay for transaction fees
 3. **Environment Setup**: A .env file configured with your gas wallet private key
 4. **Network Information**: Knowledge of which network (Ethereum or Arbitrum) your Digital Will is on
@@ -75,9 +79,10 @@ GAS_WALLET_PRIVATE_KEY=your_private_key_here
 Note: Private key can be provided with or without the 0x prefix.
 
 4. Set up testator keys:
-   - Export your keys from the Inheritor iOS app
+   - Export your keys from the Inheritor iOS app (includes both Ethereum and ML-KEM-768 quantum keys)
    - Place the exported `InheritorKeys_YYYY-MM-DD.json` file in the `./keys/` directory
    - The script will automatically detect and use the most recent key file
+   - Note: The key file contains quantum-safe cryptographic keys for secure inheritance management
 
 5. To verify Node.js is installed correctly, run:
 ```bash

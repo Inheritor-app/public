@@ -14,16 +14,21 @@
 
 ## Introduction
 
-The Inheritor Beneficiary Claim Tool is designed to allow beneficiaries to claim digital inheritances that have become available to them. This tool provides direct access to retrieve, decrypt, and save inherited digital assets that have been encrypted and stored on the Arweave network.
+The Inheritor Beneficiary Claim Tool is a quantum-safe implementation designed to allow beneficiaries to claim digital inheritances that have become available to them. This tool uses advanced post-quantum cryptography to ensure your inheritance remains secure even against future quantum computing threats.
+
+The tool implements a split-storage architecture combining blockchain, decentralized storage, and time-locked key services:
+- **Smart Contract**: Stores inheritance metadata on Ethereum/Arbitrum
+- **Arweave**: Stores encrypted asset data with quantum-safe encapsulated keys
+- **CloudFlare**: Provides time-locked symmetric key storage with signature authentication
 
 With this tool, you can:
 - Verify if an inheritance is in the "Claimable" state
-- Retrieve the Arweave transaction ID from the blockchain
-- Fetch and decrypt the symmetric key needed for asset decryption
-- Download and decrypt the inherited digital asset
+- Retrieve encrypted asset data from Arweave using quantum-safe ML-KEM-768 cryptography
+- Fetch time-locked symmetric keys from CloudFlare with signature verification
+- Decrypt inherited digital assets using post-quantum cryptographic algorithms
 - Save the decrypted file to your local system
 
-This tool is intended for use when an inheritance has reached the "Claimable" state, allowing you to claim and access the inherited asset securely.
+This tool is intended for use when an inheritance has reached the "Claimable" state, allowing you to claim and access the inherited asset with quantum-resistant security.
 
 **Note**: This tool works alongside the Beneficiary Check Tool for verifying inheritance status.
 
@@ -33,9 +38,10 @@ Before using this tool, you'll need:
 
 1. **Recovery Mnemonic**: Your 12 or 24-word recovery phrase for the beneficiary account
 2. **Gas Wallet Private Key**: A private key for a wallet containing ETH to pay for transaction fees
-3. **Inheritance ID**: The specific ID of the inheritance you want to claim
-4. **Network Information**: Knowledge of which network (Ethereum or Arbitrum) the inheritance is on
-5. **Internet Connection**: Access to the Ethereum or Arbitrum networks
+3. **Quantum Private Keys**: Your ML-KEM-768 quantum-safe private keys (stored in InheritorKeys JSON file)
+4. **Inheritance ID**: The specific ID of the inheritance you want to claim
+5. **Network Information**: Knowledge of which network (Ethereum or Arbitrum) the inheritance is on
+6. **Internet Connection**: Access to the Ethereum or Arbitrum networks and external services (Arweave, CloudFlare)
 
 The inheritance must be in the "Claimable" state for successful retrieval. If you're unsure about the state of your inheritance, use the Inheritor Beneficiary Check Tool first.
 
@@ -66,7 +72,7 @@ Once Node.js is installed:
 3. Install required dependencies:
 
 ```bash
-npm install ethers bip39 @ethersproject/hdnode axios crypto secp256k1
+npm install ethers bip39 @ethersproject/hdnode axios crypto secp256k1 @noble/post-quantum js-sha3
 ```
 
 4. Make the script executable (macOS/Linux only):
@@ -163,37 +169,42 @@ This function gets the storage location of your encrypted asset.
 - **When to Use**:
   - This is automatically performed after claimability is confirmed
 
-### 3. Decrypt Symmetric Key
+### 3. Decrypt Symmetric Key (Quantum-Safe)
 
-This function retrieves and decrypts the key needed to unlock your inheritance.
+This function retrieves and decrypts the key needed to unlock your inheritance using post-quantum cryptography.
 
 - **Process**:
-  - Fetches the encrypted symmetric key from Cloudflare
-  - Performs ECDH key exchange using your private key
-  - Derives a shared secret for decryption
-  - Decrypts the symmetric key
+  - Fetches the encrypted symmetric key from CloudFlare with signature authentication
+  - Performs ML-KEM-768 key decapsulation using your quantum private key
+  - Derives encryption keys using HKDF-SHA256 with specific parameters
+  - Decrypts the symmetric key using AES-256-GCM with Additional Authenticated Data (AAD)
 
 - **Important Notes**:
-  - The symmetric key is encrypted specifically for your address
-  - Only your private key can decrypt this symmetric key
-  - This is a cryptographic operation, not a blockchain transaction
+  - Uses quantum-safe ML-KEM-768 cryptography to resist quantum computer attacks
+  - The symmetric key is encrypted for dual recipients (iOS app + external tools)
+  - Requires your ML-KEM-768 private key (2400 bytes) for decryption
+  - CloudFlare provides time-locked storage with Ethereum signature verification
 
 - **When to Use**:
   - This is automatically performed after retrieving the Arweave ID
 
-### 4. Download and Decrypt Asset
+### 4. Download and Decrypt Asset (Dual-Recipient Format)
 
-This function retrieves and decrypts your inherited digital asset.
+This function retrieves and decrypts your inherited digital asset using the dual-recipient encryption format.
 
 - **Process**:
-  - Downloads the encrypted asset from Arweave network
-  - Uses the symmetric key to decrypt the asset
-  - Saves the decrypted file to the current directory
+  - Downloads the ArweaveEncryptedData JSON from Arweave network
+  - Extracts encrypted asset data, nonce, authentication tag, and metadata
+  - Uses the decrypted symmetric key with AES-256-GCM decryption
+  - Applies dual-recipient Additional Authenticated Data (AAD) for verification
+  - Saves the decrypted file to the current directory with proper file extension
 
 - **Important Notes**:
-  - The filename is based on the inheritance ID
-  - The file extension is determined from the asset metadata
-  - This is the final step of the claim process
+  - Assets are encrypted using dual-recipient format supporting both iOS and external tools
+  - Uses AES-256-GCM with AAD: `v=1|alg=AES-256-GCM|recipients=2`
+  - The filename is based on the inheritance ID with original file extension
+  - File metadata (type, size) is preserved from the original encryption
+  - This is the final step of the quantum-safe claim process
 
 - **When to Use**:
   - This is automatically performed after the symmetric key is decrypted
@@ -229,16 +240,35 @@ This function retrieves and decrypts your inherited digital asset.
 - Used to identify you as the beneficiary
 - The script derives this from your mnemonic automatically
 
-### Cryptographic Process
+#### ML-KEM-768 (Module Lattice Key Encapsulation Mechanism)
+- NIST-standardized post-quantum cryptographic algorithm
+- Provides security against both classical and quantum computer attacks
+- Uses 2400-byte private keys and 1184-byte public keys
+- Part of the X-Wing hybrid approach combining classical and quantum-safe methods
 
-The decryption process involves multiple cryptographic operations:
+#### Dual-Recipient Encryption
+- Encryption format supporting both iOS app and external command-line tools
+- Uses separate key derivation paths for each recipient type
+- Allows inheritance claiming from multiple device types securely
+- Maintains backward compatibility while adding quantum-safe features
 
-1. **ECDH Key Exchange**: Uses your private key and an ephemeral public key to create a shared secret
-2. **HKDF Key Derivation**: Derives an encryption key from the shared secret
-3. **AES-GCM Decryption**: Decrypts the symmetric key using authenticated encryption
-4. **Asset Decryption**: The symmetric key is then used to decrypt the actual asset
+#### Additional Authenticated Data (AAD)
+- Extra data included in AES-GCM encryption for authentication
+- Helps verify the integrity and context of encrypted data
+- Used to distinguish between different encryption purposes (key wrapping vs asset encryption)
+- Format: `v=1|alg=AES-256-GCM|recipients=2` for dual-recipient assets
 
-This multi-layer approach ensures that only the intended beneficiary can access the inherited asset.
+### Quantum-Safe Cryptographic Process
+
+The decryption process involves multiple quantum-resistant cryptographic operations:
+
+1. **ML-KEM-768 Key Decapsulation**: Uses your quantum-safe private key (2400 bytes) to decapsulate the shared secret from the encapsulated key
+2. **HKDF-SHA256 Key Derivation**: Derives encryption keys using specific info strings: `wrap|v=1|kid=${kid}|alg=AES-256-GCM`
+3. **AES-256-GCM Symmetric Key Decryption**: Decrypts the wrapped symmetric key using Additional Authenticated Data (AAD): `v=1|kid=${kid}|type=mlkem768|purpose=wrap`
+4. **Dual-Recipient Asset Decryption**: Uses the symmetric key with dual-recipient AAD: `v=1|alg=AES-256-GCM|recipients=2`
+5. **Signature Verification**: CloudFlare verifies Ethereum signatures for time-locked key access
+
+This quantum-safe multi-layer approach ensures that only the intended beneficiary can access the inherited asset, even against future quantum computer attacks. The system uses NIST-standardized ML-KEM-768 (formerly CRYSTALS-Kyber) for post-quantum security.
 
 ### Inheritance States
 
@@ -281,8 +311,11 @@ Only inheritances in the "Claimable" state can be processed with this tool.
 - **Solution**: Verify you're using the correct inheritance ID and network
 
 #### "Error during decryption"
-- **Cause**: Issue with the cryptographic operations
-- **Solution**: Verify you're using the correct beneficiary mnemonic
+- **Cause**: Issue with the quantum-safe cryptographic operations
+- **Solution**:
+  - Verify you're using the correct beneficiary mnemonic
+  - Ensure your InheritorKeys file contains valid ML-KEM-768 quantum keys
+  - Check that the quantum private key is the full 2400-byte key, not a truncated version
 
 #### "Failed to retrieve asset from Arweave"
 - **Cause**: Problem accessing the stored asset on Arweave

@@ -1,92 +1,70 @@
 #!/usr/bin/env node
 
 /**
- * Inheritor Beneficiary Claim Tool
- * 
- * This script allows beneficiaries to claim their inheritances by:
- * 1. Retrieving the Arweave transaction ID from the smart contract
- * 2. Fetching the encrypted symmetric key from Cloudflare
- * 3. Decrypting the symmetric key using the beneficiary's private key
- * 4. Downloading the encrypted asset from Arweave
- * 5. Decrypting the asset using the symmetric key
- * 6. Saving the decrypted file to the current directory
+ * Inheritance Claim Tool - Quantum-Safe Implementation
+ *
+ * This tool enables beneficiaries to claim digital inheritances using quantum-resistant cryptography
+ * and a split-storage architecture for enhanced security.
+ *
+ * Architecture:
+ * - Smart Contract: Stores inheritance metadata and Arweave transaction ID
+ * - Arweave: Stores encrypted asset data and ML-KEM-768 encapsulated keys
+ * - CloudFlare: Stores time-locked encrypted symmetric keys with signature authentication
+ *
+ * Cryptography:
+ * - ML-KEM-768: NIST-standardized quantum-safe key encapsulation mechanism
+ * - X-Wing: Hybrid classical/quantum-safe key agreement (ML-KEM-768 + X25519)
+ * - AES-256-GCM: Authenticated encryption for asset data
+ * - HKDF-SHA256: Key derivation for symmetric key wrapping
+ *
+ * Usage: node Claim.js
  */
 
+require('dotenv').config();
 const { ethers } = require('ethers');
-const bip39 = require('bip39');
-const { HDNode } = require('@ethersproject/hdnode');
 const crypto = require('crypto');
+const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
-const secp256k1 = require('secp256k1');
 const readline = require('readline');
+const secp256k1 = require('secp256k1');
+const { keccak256 } = require('js-sha3');
+const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
+
+// Import shared utilities (following refactored pattern)
+const {
+    NETWORK_CONFIGS,
+    INHERITANCE_STATES,
+    STATE_NAMES,
+    CONTRACT_ABIS,
+    formatters,
+    networkUtils,
+    errorHandlers,
+    keyUtils
+} = require('./utils/shared-utils');
 
 // =============================================================================
-// Configuration Constants
+// Constants
 // =============================================================================
 
-// Contract & Network Settings
-const PROXY_CONTRACT_ADDRESS = '0x1539421f1C4E7AE4CFDBc42F2723558D2fE407dF'; // Ethereum proxy contract
-const ETHEREUM_CHAIN_ID = 1;
-const ARBITRUM_CHAIN_ID = 42161;
-const CLOUDFLARE_WORKER_URL = 'https://keyprovider-prod.inheritor.workers.dev';
+const CLOUDFLARE_WORKER_URL = 'https://keyprovider-test.inheritor.workers.dev';
 
-// ABI Fragments
-const PROXY_ABI = [
-  'function getContractAddress(uint256 chainId) external view returns (address)'
-];
-
-const INHERITOR_ABI = [
-  'function inheritances(bytes32 inheritanceId) public view returns (address testatorEOA, address testatorSAA, address beneficiaryEOA, address beneficiarySAA, uint256 gracePeriod, uint8 state, bytes32 arweaveTransactionId, uint256 scheduledTransferTime)',
-  'function isClaimable(bytes32 inheritanceId) public returns (bool)',
-  'event AddInheritance(bytes32 indexed inheritanceId, address indexed testatorEOA, address indexed beneficiaryEOA)'
-];
-
-// Create readline interface for user input
+// Create readline interface
 const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
+    input: process.stdin,
+    output: process.stdout
 });
 
-// Network configurations with fallback RPC endpoints
-const NETWORK_CONFIGS = {
-  ethereum: {
-    name: 'Ethereum Mainnet',
-    chainId: ETHEREUM_CHAIN_ID,
-    publicFallbacks: [
-      'https://eth.llamarpc.com',
-      'https://rpc.ankr.com/eth',
-      'https://cloudflare-eth.com'
-    ]
-  },
-  arbitrum: {
-    name: 'Arbitrum One',
-    chainId: ARBITRUM_CHAIN_ID,
-    publicFallbacks: [
-      'https://arb1.arbitrum.io/rpc',
-      'https://rpc.ankr.com/arbitrum',
-      'https://arbitrum-one.publicnode.com'
-    ]
-  }
-};
-
-// Inheritance state names for better user feedback
-const STATE_NAMES = {
-  0: 'Designated',
-  1: 'Claimable',
-  2: 'Claimed',
-  3: 'Revoked',
-  4: 'Purged'
-};
-
 // =============================================================================
-// Cryptographic Utilities
+// Helper Functions
 // =============================================================================
+
+function question(query) {
+    return new Promise(resolve => rl.question(query, resolve));
+}
 
 /**
- * Implements HKDF (RFC 5869) key derivation function
- * 
+ * HKDF (RFC 5869) key derivation function - UNCHANGED from old script
  * @param {Buffer} ikm Initial keying material (shared secret)
  * @param {Buffer} salt Salt value
  * @param {Buffer} info Context and application specific information
@@ -94,678 +72,445 @@ const STATE_NAMES = {
  * @returns {Buffer} Derived key
  */
 function hkdf(ikm, salt, info, length) {
-  // HKDF-Extract: Create the pseudorandom key (PRK) using HMAC-SHA256
-  const prk = crypto.createHmac('sha256', salt).update(ikm).digest();
-  
-  // HKDF-Expand: Expand the PRK to the desired length
-  const okm = Buffer.alloc(length);
-  let t = Buffer.alloc(0);
-  let offset = 0;
-  
-  for (let i = 1; i <= Math.ceil(length / 32); i++) {
-    // T(i) = HMAC-SHA256(PRK, T(i-1) || info || i)
-    const data = Buffer.concat([t, info, Buffer.from([i])]);
-    t = crypto.createHmac('sha256', prk).update(data).digest();
-    t.copy(okm, offset, 0, Math.min(32, length - offset));
-    offset += 32;
-  }
-  
-  return okm;
+    // HKDF-Extract: Create the pseudorandom key (PRK) using HMAC-SHA256
+    const prk = crypto.createHmac('sha256', salt).update(ikm).digest();
+
+    // HKDF-Expand: Expand the PRK to the desired length
+    const okm = Buffer.alloc(length);
+    let t = Buffer.alloc(0);
+    let offset = 0;
+
+    for (let i = 1; i <= Math.ceil(length / 32); i++) {
+        // T(i) = HMAC-SHA256(PRK, T(i-1) || info || i)
+        const data = Buffer.concat([t, info, Buffer.from([i])]);
+        t = crypto.createHmac('sha256', prk).update(data).digest();
+        t.copy(okm, offset, 0, Math.min(32, length - offset));
+        offset += 32;
+    }
+
+    return okm;
 }
 
+
 // =============================================================================
-// User Interface & Helper Functions
+// CloudFlare Integration with Signature Authentication
 // =============================================================================
 
 /**
- * Prompt the user for input with a question
- * @param {string} query The question to ask
- * @returns {Promise<string>} User's response
+ * Generate app signature for CloudFlare authentication
+ * @param {string} inheritanceId Inheritance ID (hex string)
+ * @param {string} timestamp ISO timestamp
+ * @param {string} privateKey Ethereum private key (hex with 0x prefix)
+ * @returns {string} Hex signature
  */
-function question(query) {
-  return new Promise(resolve => rl.question(query, resolve));
+function generateAppSignature(inheritanceId, timestamp, privateKey) {
+    // Message format matches CloudFlareManager.swift: inheritanceId + timestamp
+    const message = `${inheritanceId}${timestamp}`;
+
+    // Ethereum personal message signing
+    const messageBytes = Buffer.from(message, 'utf8');
+    const prefix = `\x19Ethereum Signed Message:\n${messageBytes.length}`;
+    const prefixBytes = Buffer.from(prefix, 'utf8');
+
+    // Combine and hash with keccak256 (Ethereum standard)
+    const fullMessage = Buffer.concat([prefixBytes, messageBytes]);
+    const messageHash = Buffer.from(keccak256(fullMessage), 'hex');
+
+    // Sign with secp256k1
+    const privateKeyBuffer = Buffer.from(privateKey.replace('0x', ''), 'hex');
+    const { signature, recid } = secp256k1.ecdsaSign(messageHash, privateKeyBuffer);
+
+    // Add recovery id to signature (Ethereum format)
+    const ethSignature = Buffer.concat([signature, Buffer.from([recid + 27])]);
+
+    return ethSignature.toString('hex');
 }
 
 /**
- * Derive Ethereum keys from a mnemonic phrase (BIP39 recovery phrase)
- * @param {string} mnemonic The recovery phrase (BIP39 mnemonic)
- * @returns {Object} Object containing address, privateKey, and publicKey
+ * Retrieve encrypted symmetric key from CloudFlare with signature authentication
+ * @param {string} inheritanceId Inheritance ID
+ * @param {string} network Network name ('ethereum' or 'arbitrum')
+ * @param {string} beneficiaryEthPrivateKey Ethereum private key for signing
+ * @returns {Promise<Buffer>} Encrypted symmetric key
  */
-function deriveKeysFromMnemonic(mnemonic) {
-  // Validate mnemonic
-  if (!bip39.validateMnemonic(mnemonic)) {
-    throw new Error('Invalid mnemonic phrase');
-  }
-  
-  // Convert mnemonic to seed
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
-  
-  // Create HD wallet using the standard Ethereum path m/44'/60'/0'/0/0
-  const hdNode = HDNode.fromSeed(seed);
-  const wallet = hdNode.derivePath("m/44'/60'/0'/0/0");
-  
-  return {
-    address: wallet.address,
-    privateKey: wallet.privateKey,
-    publicKey: wallet.publicKey
-  };
-}
+async function retrieveEncryptedSymmetricKey(inheritanceId, network, beneficiaryEthPrivateKey) {
+    console.log('Retrieving encrypted symmetric key from CloudFlare...');
 
-// =============================================================================
-// Blockchain & Network Functions
-// =============================================================================
-
-/**
- * Set up an Ethereum provider with retry logic
- * Attempts to connect to user-specified or public RPC endpoints
- * 
- * @param {Object} networkConfig Network configuration object
- * @returns {Promise<JsonRpcProvider>} Connected provider
- */
-async function setupProvider(networkConfig) {
-  console.log('\nRPC Configuration:');
-  console.log('1. Enter custom RPC URL (recommended: Infura, Alchemy, etc.)');
-  console.log('2. Use public RPC endpoints (may be less reliable)');
-  const rpcChoice = await question('Your choice (1-2): ');
-  
-  let rpcUrl;
-  if (rpcChoice === '1') {
-    rpcUrl = await question(`Enter RPC URL for ${networkConfig.name}: `);
-  } else {
-    console.log('Trying public RPC endpoints...');
-    rpcUrl = networkConfig.publicFallbacks[0];
-    console.log(`Using: ${rpcUrl}`);
-  }
-  
-  // Set up provider with retry logic
-  let provider;
-  let attempts = 0;
-  let connected = false;
-  
-  while (!connected && attempts < 3) {
     try {
-      console.log(`Connecting to ${rpcUrl}...`);
-      provider = new ethers.JsonRpcProvider(rpcUrl);
-      
-      // Test the connection
-      await provider.getBlockNumber();
-      connected = true;
-      console.log('Connection successful!');
-    } catch (error) {
-      attempts++;
-      console.log(`Connection failed: ${error.message}`);
-      
-      if (attempts < 3 && networkConfig.publicFallbacks.length > attempts) {
-        rpcUrl = networkConfig.publicFallbacks[attempts];
-        console.log(`Trying alternative endpoint: ${rpcUrl}`);
-      } else if (attempts >= 3) {
-        throw new Error('Failed to connect to any RPC endpoint. Please try again with a custom URL from Infura or Alchemy.');
-      }
-    }
-  }
-  
-  // Verify we're connected to the chosen network
-  const network = await provider.getNetwork();
-  console.log(`Connected to network: ${network.name} (Chain ID: ${network.chainId})`);
-  
-  if (network.chainId !== BigInt(networkConfig.chainId)) {
-    throw new Error(`Provider connected to wrong network. Expected chain ID ${networkConfig.chainId}, got ${network.chainId}`);
-  }
-  
-  return provider;
-}
+        const timestamp = new Date().toISOString();
+        const signature = generateAppSignature(inheritanceId, timestamp, beneficiaryEthPrivateKey);
 
-/**
- * Get contract address from Ethereum proxy for any chain
- * @param {JsonRpcProvider} provider Ethereum provider
- * @param {number} targetChainId Target chain ID
- * @returns {Promise<string>} Contract address
- */
-async function getContractAddressFromProxy(provider, targetChainId) {
-  console.log(`Retrieving ${targetChainId === ETHEREUM_CHAIN_ID ? 'Ethereum' : 'Arbitrum'} contract address from proxy...`);
-  
-  // First ensure we're connected to Ethereum where the proxy is deployed
-  const network = await provider.getNetwork();
-  const isEthereumProvider = network.chainId === BigInt(ETHEREUM_CHAIN_ID);
-  
-  if (!isEthereumProvider) {
-    throw new Error("Must use an Ethereum provider to access the proxy contract");
-  }
-  
-  // Check if proxy contract exists at the address
-  const code = await provider.getCode(PROXY_CONTRACT_ADDRESS);
-  if (code === '0x') {
-    throw new Error(`No contract found at proxy address ${PROXY_CONTRACT_ADDRESS}`);
-  }
-  
-  const proxyContract = new ethers.Contract(
-    PROXY_CONTRACT_ADDRESS,
-    PROXY_ABI,
-    provider
-  );
-  
-  const contractAddress = await proxyContract.getContractAddress(targetChainId);
-  
-  // Check if the contract is in maintenance mode (address is 0x0)
-  if (contractAddress === '0x0000000000000000000000000000000000000000') {
-    throw new Error(`Contract on chain ID ${targetChainId} is currently in maintenance mode.`);
-  }
-  
-  return contractAddress;
-}
+        // Use the root path for inheritance key retrieval (per worker code)
+        const url = `${CLOUDFLARE_WORKER_URL}`;
+        const params = {
+            inheritanceId,
+            network,
+            appSignature: signature,
+            timestamp
+        };
 
-/**
- * Get contract address for network
- * @param {JsonRpcProvider} provider Provider for the network
- * @param {Object} networkConfig Network configuration
- * @returns {Promise<string>} Contract address
- */
-async function getContractAddressForNetwork(provider, networkConfig) {
-  let contractAddress;
-  let ethProvider;
-  
-  try {
-    // If we're already on Ethereum, use the current provider
-    if (networkConfig.chainId === ETHEREUM_CHAIN_ID) {
-      ethProvider = provider;
-    } else {
-      // If we're on Arbitrum, we need a separate Ethereum provider to query the proxy
-      console.log('\nCreating separate Ethereum connection to query proxy contract...');
-      
-      // Try to use a public Ethereum endpoint
-      for (const rpcUrl of NETWORK_CONFIGS.ethereum.publicFallbacks) {
-        try {
-          ethProvider = new ethers.JsonRpcProvider(rpcUrl);
-          // Test the connection
-          await ethProvider.getBlockNumber();
-          console.log(`Connected to Ethereum via ${rpcUrl}`);
-          break;
-        } catch (error) {
-          console.log(`Failed to connect to Ethereum via ${rpcUrl}: ${error.message}`);
+        const response = await axios.get(url, { params });
+
+        if (response.data.message === "Inheritance is not claimable") {
+            throw new Error('Inheritance is not claimable yet');
         }
-      }
-      
-      // If we couldn't connect to any public endpoint
-      if (!ethProvider) {
-        console.log('\nFailed to connect to any public Ethereum endpoint.');
-        const ethRpcUrl = await question('Please enter an Ethereum RPC URL: ');
-        ethProvider = new ethers.JsonRpcProvider(ethRpcUrl);
-        
-        // Test the connection
-        try {
-          await ethProvider.getBlockNumber();
-          console.log('Connected to Ethereum successfully!');
-        } catch (error) {
-          throw new Error(`Failed to connect to Ethereum: ${error.message}`);
+
+        if (!response.data.encryptedSymmetricKey) {
+            throw new Error('No symmetric key returned from CloudFlare');
         }
-      }
-    }
-    
-    // Now that we have an Ethereum provider, query the proxy contract
-    contractAddress = await getContractAddressFromProxy(ethProvider, networkConfig.chainId);
-    console.log(`Contract address for ${networkConfig.name}: ${contractAddress}`);
-    
-  } catch (error) {
-    console.error(`\nError getting contract address from proxy: ${error.message}`);
-    console.log('Falling back to manual entry mode.');
-    contractAddress = await question(`Please enter the Inheritor contract address for ${networkConfig.name}: `);
-    if (!ethers.isAddress(contractAddress)) {
-      throw new Error('Invalid contract address format');
-    }
-  }
-  
-  return contractAddress;
-}
 
-/**
- * Check if inheritance is claimable
- * @param {ethers.Contract} contract Inheritor contract
- * @param {string} inheritanceId Inheritance ID
- * @returns {Promise<boolean>} Whether inheritance is claimable
- */
-async function isInheritanceClaimable(contract, inheritanceId) {
-  console.log('Checking if inheritance is claimable...');
-  
-  try {
-    const inheritance = await contract.inheritances(inheritanceId);
-    
-    const state = parseInt(inheritance.state);
-    console.log(`Inheritance state: ${STATE_NAMES[state]} (${state})`);
-    
-    // State 1 is Claimable
-    return state === 1;
-  } catch (error) {
-    console.error('Error checking if inheritance is claimable:', error.message);
-    throw error;
-  }
-}
-
-/**
- * Fetch Arweave transaction ID from smart contract
- * @param {ethers.Contract} contract Inheritor contract
- * @param {string} inheritanceId Inheritance ID
- * @returns {Promise<string>} Arweave transaction ID
- */
-async function fetchArweaveTransactionId(contract, inheritanceId) {
-  console.log('Fetching Arweave transaction ID from smart contract...');
-  
-  try {
-    // First try the direct method if it exists
-    try {
-      const arweaveTransactionId = await contract.fetchArweaveTransactionId(inheritanceId);
-      return ethers.hexlify(arweaveTransactionId);
+        return Buffer.from(response.data.encryptedSymmetricKey, 'base64');
     } catch (error) {
-      console.log('Direct method not available, falling back to inheritance struct...');
+        if (error.response && error.response.status === 404) {
+            throw new Error(`Encrypted symmetric key not found in CloudFlare. This could mean:
+1. The inheritance was created before CloudFlare integration
+2. The symmetric key was never stored in CloudFlare
+3. The CloudFlare worker endpoint has changed
+4. The inheritance ID or network parameter is incorrect
+
+CloudFlare URL attempted: ${CLOUDFLARE_WORKER_URL}
+Network: ${network}
+Inheritance ID: ${inheritanceId}`);
+        }
+
+        throw errorHandlers.handleContractError(error, 'CloudFlare key retrieval');
     }
-    
-    // Fallback to getting it from the inheritance struct
-    const inheritance = await contract.inheritances(inheritanceId);
-    const arweaveTransactionId = inheritance.arweaveTransactionId;
-    
-    // Convert to hex string with 0x prefix
-    const hexTransactionId = ethers.hexlify(arweaveTransactionId);
-    
-    return hexTransactionId;
-  } catch (error) {
-    console.error('Error fetching Arweave transaction ID:', error.message);
-    throw error;
-  }
 }
 
 // =============================================================================
-// Cloudflare & Arweave Functions
+// Arweave Integration for JSON Format
 // =============================================================================
 
 /**
- * Retrieve encrypted symmetric key from Cloudflare
- * @param {string} inheritanceId Inheritance ID
- * @param {string} network Network name (ethereum or arbitrum)
- * @returns {Promise<string>} Encrypted symmetric key
- */
-async function retrieveEncryptedSymmetricKey(inheritanceId, network) {
-  console.log('Retrieving encrypted symmetric key from Cloudflare...');
-  
-  try {
-    const url = `${CLOUDFLARE_WORKER_URL}/?inheritanceId=${inheritanceId}&network=${network}`;
-    const response = await axios.get(url);
-    
-    if (response.status !== 200) {
-      throw new Error(`Server responded with status code ${response.status}`);
-    }
-    
-    if (!response.data.encryptedSymmetricKey) {
-      throw new Error('Server did not return encrypted symmetric key. The inheritance may not be claimable.');
-    }
-    
-    console.log(`Retrieved encrypted symmetric key (${response.data.encryptedSymmetricKey.length} chars)`);
-    return response.data.encryptedSymmetricKey;
-  } catch (error) {
-    if (error.response) {
-      console.error(`Server responded with error status: ${error.response.status}`);
-      if (error.response.data && error.response.data.message) {
-        throw new Error(`Server message: ${error.response.data.message}`);
-      }
-    }
-    throw error;
-  }
-}
-
-/**
- * Retrieve asset data from Arweave
- * @param {string} transactionId Arweave transaction ID (hex format with or without 0x prefix)
- * @returns {Promise<{data: Buffer, fileExtension: string}>} Asset data and file extension
+ * Retrieve and parse ArweaveEncryptedData from Arweave
+ * @param {string} transactionId Arweave transaction ID (hex string)
+ * @returns {Promise<Object>} Parsed ArweaveEncryptedData structure
  */
 async function retrieveAssetFromArweave(transactionId) {
-  // Remove 0x prefix if present
-  const cleanHexId = transactionId.startsWith('0x') ? transactionId.slice(2) : transactionId;
-  
-  // Convert hex to base64url (Arweave's native format)
-  // Step 1: Convert hex to bytes
-  const bytes = Buffer.from(cleanHexId, 'hex');
-  // Step 2: Convert bytes to base64
-  const base64 = bytes.toString('base64');
-  // Step 3: Convert base64 to base64url (replace + with -, / with _, and remove trailing =)
-  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  
-  console.log(`Converted base64url transaction ID: ${base64url}`);
-  
-  // Try different formats
-  const possibleIds = [
-    cleanHexId,                    // Raw hex (no 0x prefix)
-    base64url,                     // Base64URL encoded
-    cleanHexId.replace(/^0+/, '')  // Hex with leading zeros removed
-  ];
-  
-  // Try each possible format
-  for (const id of possibleIds) {
+    console.log('Fetching encrypted asset from Arweave...');
+
     try {
-      // First fetch the transaction data to get tags (including Content-Type)
-      const transactionUrl = `https://arweave.net/tx/${id}`;
-      
-      try {
-        const transactionResponse = await axios.get(transactionUrl);
-        
-        if (transactionResponse.status !== 200) {
-          continue;
+        // Convert hex transaction ID to base64url for Arweave
+        let txId = transactionId;
+        if (transactionId.startsWith('0x')) {
+            // Convert from hex to base64url
+            const hexBytes = Buffer.from(transactionId.slice(2), 'hex');
+            txId = hexBytes.toString('base64url');
         }
-        
-        // Extract tags to find Content-Type
-        const tags = transactionResponse.data.tags || [];
-        let fileExtension = 'bin'; // Default extension
-        
-        for (const tag of tags) {
-          const nameData = Buffer.from(tag.name, 'base64url');
-          const name = nameData.toString('utf8');
-          
-          if (name === 'Content-Type') {
-            const valueData = Buffer.from(tag.value, 'base64url');
-            const contentType = valueData.toString('utf8');
-            fileExtension = contentType.split('/').pop() || 'bin';
-            break;
-          }
+
+        const dataUrl = `https://arweave.net/${txId}`;
+
+        // Fetch as JSON (ArweaveEncryptedData structure)
+        const response = await axios.get(dataUrl);
+
+        if (!response.data || typeof response.data !== 'object') {
+            throw new Error('Invalid response format from Arweave');
         }
-        
-        // Now fetch the actual data
-        const dataUrl = `https://arweave.net/${id}`;
-        const dataResponse = await axios.get(dataUrl, {
-          responseType: 'arraybuffer' // Important for binary data
-        });
-        
-        if (dataResponse.status !== 200) {
-          continue;
+
+        const arweaveData = response.data;
+
+        // Validate dual-recipient format (only format supported)
+        if (!arweaveData.recipients || !Array.isArray(arweaveData.recipients)) {
+            throw new Error('Invalid data format: expected dual-recipient format with recipients array');
         }
-        
-        console.log(`Retrieved encrypted asset (${dataResponse.data.byteLength} bytes) with extension .${fileExtension}`);
+
+        console.log(`Retrieved DualRecipientEncryptedData (algorithm: ${arweaveData.algorithm})`);
+
+        // Find the external (ML-KEM-768) recipient for Claim.js
+        const externalRecipient = arweaveData.recipients.find(r => r.type === 'mlkem768');
+        if (!externalRecipient) {
+            throw new Error('No external (ML-KEM-768) recipient found in dual-recipient data');
+        }
+
+        // Validate required fields
+        if (!arweaveData.ciphertext || !arweaveData.nonce || !arweaveData.tag) {
+            throw new Error('Missing required fields in dual-recipient data');
+        }
+
         return {
-          data: Buffer.from(dataResponse.data),
-          fileExtension
+            encapsulatedKey: Buffer.from(externalRecipient.kem_ct, 'base64'),
+            encryptedData: Buffer.from(arweaveData.ciphertext, 'base64'),
+            nonce: Buffer.from(arweaveData.nonce, 'base64'),
+            tag: Buffer.from(arweaveData.tag, 'base64'),
+            fileType: arweaveData.fileType || 'bin',
+            algorithm: arweaveData.algorithm || 'AES-256-GCM',
+            externalRecipient: {
+                kid: externalRecipient.kid, // Include the actual kid for HKDF
+                salt: Buffer.from(externalRecipient.salt, 'base64'),
+                wrapNonce: Buffer.from(externalRecipient.wrap_nonce, 'base64'),
+                wrappedKey: Buffer.from(externalRecipient.wrappedK, 'base64')
+            }
         };
-      } catch (error) {
-        // Continue to the next format
-      }
     } catch (error) {
-      // Continue to the next format
+        throw errorHandlers.handleContractError(error, 'Arweave retrieval');
     }
-  }
-  
-  // If all formats fail, throw an error
-  throw new Error("Failed to retrieve asset from Arweave with any of the attempted transaction ID formats");
 }
 
 // =============================================================================
-// Decryption Functions
+// ML-KEM-768 Quantum-Safe Decryption
 // =============================================================================
 
 /**
- * Decrypts a symmetric key using the beneficiary's private key
- * Matches the CryptionManager.decryptSymmetricKey implementation in Swift
- * 
- * @param {string} encryptedSymmetricKey Hex-encoded encrypted symmetric key
- * @param {string} privateKey Beneficiary's private key
- * @returns {Buffer} Decrypted symmetric key
+ * Decrypt symmetric key for dual-recipient format using ML-KEM-768
+ * @param {Buffer} wrappedKey Wrapped AES key from CloudFlare (external recipient)
+ * @param {Buffer} encapsulatedKey ML-KEM-768 encapsulated key from Arweave
+ * @param {Object} externalRecipient External recipient info (salt, wrapNonce)
+ * @param {string} quantumPrivateKey Base64 encoded ML-KEM-768 private key
+ * @returns {Buffer} Decrypted AES-256 symmetric key
  */
-function decryptSymmetricKey(encryptedSymmetricKey, privateKey) {
-  console.log('Decrypting symmetric key...');
-  
-  // Validate inputs
-  if (!encryptedSymmetricKey || !privateKey) {
-    throw new Error('Missing required parameters');
-  }
-  
-  // Normalize private key (remove 0x prefix if present)
-  let privateKeyBuffer;
-  if (privateKey.startsWith('0x')) {
-    privateKeyBuffer = Buffer.from(privateKey.slice(2), 'hex');
-  } else {
-    privateKeyBuffer = Buffer.from(privateKey, 'hex');
-  }
-  
-  if (privateKeyBuffer.length !== 32) {
-    throw new Error(`Invalid private key length: ${privateKeyBuffer.length}. Expected 32 bytes.`);
-  }
-  
-  // Normalize encrypted key (remove 0x prefix if present)
-  let encryptedKeyBuffer;
-  if (encryptedSymmetricKey.startsWith('0x')) {
-    encryptedKeyBuffer = Buffer.from(encryptedSymmetricKey.slice(2), 'hex');
-  } else {
-    encryptedKeyBuffer = Buffer.from(encryptedSymmetricKey, 'hex');
-  }
-  
-  // Verify minimum required length
-  const minimumLength = 65 + 32 + 12 + 32 + 16; // ephemeral public key + salt + nonce + minimum cipher text + tag
-  if (encryptedKeyBuffer.length < minimumLength) {
-    throw new Error(`Encrypted key too short: ${encryptedKeyBuffer.length}. Expected at least ${minimumLength} bytes.`);
-  }
-  
-  // Extract components ephemeral public key (65) + salt (32) + nonce (12) + ciphertext + tag (16)
-  const ephemeralPublicKey = Buffer.from(encryptedKeyBuffer.subarray(0, 65));
-  const salt = Buffer.from(encryptedKeyBuffer.subarray(65, 97));
-  const nonce = Buffer.from(encryptedKeyBuffer.subarray(97, 109));
-  const ciphertext = Buffer.from(encryptedKeyBuffer.subarray(109, encryptedKeyBuffer.length - 16));
-  const tag = Buffer.from(encryptedKeyBuffer.subarray(encryptedKeyBuffer.length - 16));
-  
-  try {
-    // Compute ECDH shared secret
-    const ecdh = crypto.createECDH('secp256k1');
-    ecdh.setPrivateKey(privateKeyBuffer);
-    const rawSharedPoint = ecdh.computeSecret(ephemeralPublicKey);
-    
-    // Extract the X coordinate of the shared point
-    const x = rawSharedPoint.length > 32 ? 
-      Buffer.from(rawSharedPoint.subarray(0, 32)) : 
-      Buffer.from(rawSharedPoint);
-    
-    // Implement secp256k1_ecdh algorithm as used in the C implementation:
-    // 1. Create compressed point format (0x02 + X coordinate)
-    // 2. Hash with SHA-256
-    const compressedPoint = Buffer.alloc(33);
-    compressedPoint[0] = 0x02;  // Prefix for even Y coordinate
-    x.copy(compressedPoint, 1);
-    const sharedSecret = crypto.createHash('sha256').update(compressedPoint).digest();
-    
-    const info = Buffer.from("app.inheritor.key-derivation-info", 'utf8');
-    
-    // Derive encryption key using HKDF (RFC 5869)
-    const encryptionKey = hkdf(sharedSecret, salt, info, 32);
-    
-    // Decrypt using AES-GCM
-    const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, nonce);
-    decipher.setAuthTag(tag);
-    
-    let decrypted = decipher.update(ciphertext);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    
-    return decrypted;
-  } catch (error) {
-    console.error(`Error during symmetric key decryption: ${error.message}`);
-    throw error;
-  }
-}
-/**
- * Decrypt asset using symmetric key
- * Based on CryptionManager.decryptAsset in Swift
- * 
- * @param {Buffer} encryptedData Encrypted asset data
- * @param {Buffer} symmetricKey Decrypted symmetric key
- * @returns {Buffer} Decrypted asset data
- */
-function decryptAsset(encryptedData, symmetricKey) {
-  console.log('Decrypting asset...');
-  
-  if (!encryptedData || !symmetricKey) {
-    throw new Error('Missing required parameters');
-  }
-  
-  // Validate minimum length
-  if (encryptedData.length < 12 + 1 + 16) {
-    throw new Error('Encrypted data too short');
-  }
-  
-  // Extract components
-  const nonce = Buffer.from(Uint8Array.prototype.slice.call(encryptedData, 0, 12));
-  const tag = Buffer.from(Uint8Array.prototype.slice.call(encryptedData, encryptedData.length - 16));
-  const ciphertext = Buffer.from(Uint8Array.prototype.slice.call(encryptedData, 12, encryptedData.length - 16));
-  
-  // Decrypt using AES-GCM
-  const decipher = crypto.createDecipheriv('aes-256-gcm', symmetricKey, nonce);
-  decipher.setAuthTag(tag);
-  
-  let decrypted = decipher.update(ciphertext);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  
-  return decrypted;
-}
+function decryptSymmetricKeyDualRecipient(wrappedKey, encapsulatedKey, externalRecipient, quantumPrivateKey) {
+    console.log('Decrypting symmetric key with ML-KEM-768...');
 
-/**
- * Save decrypted data to file
- * @param {Buffer} data Decrypted data
- * @param {string} inheritanceId Inheritance ID
- * @param {string} fileExtension File extension
- */
-function saveFile(data, inheritanceId, fileExtension) {
-  // Create a filename based on the inheritance ID
-  const shortId = inheritanceId.slice(0, 8); // Use first 8 chars of ID
-  const filename = `inheritance_${shortId}.${fileExtension}`;
-  
-  fs.writeFileSync(filename, data);
-  console.log(`\nFile saved: ${filename}`);
-  
-  // Get file size
-  const stats = fs.statSync(filename);
-  console.log(`File size: ${(stats.size / 1024).toFixed(2)} KB`);
-}
-
-// =============================================================================
-// Core Claim Process
-// =============================================================================
-
-/**
- * Main function to claim an inheritance
- * @param {Object} options Options object
- */
-async function claimInheritance(options) {
-  const { inheritanceId, beneficiaryKeys, networkName, contract } = options;
-  
-  try {
-    console.log(`\nClaiming inheritance ${inheritanceId}...`);
-    
-    // 1. Check if the inheritance is claimable
-    const claimable = await isInheritanceClaimable(contract, inheritanceId);
-    if (!claimable) {
-      throw new Error('Inheritance is not in Claimable state. Cannot proceed.');
-    }
-    
-    // 2. Fetch the Arweave transaction ID
-    const arweaveTransactionId = await fetchArweaveTransactionId(contract, inheritanceId);
-    console.log(`Arweave transaction ID: ${arweaveTransactionId}`);
-    
-    // 3. Retrieve the encrypted symmetric key from CloudFlare
-    const encryptedSymmetricKey = await retrieveEncryptedSymmetricKey(inheritanceId, networkName);
-    
-    // 4. Decrypt the symmetric key
-    const privateKeyWithout0x = beneficiaryKeys.privateKey.startsWith('0x') 
-      ? beneficiaryKeys.privateKey.substring(2) 
-      : beneficiaryKeys.privateKey;
-    const symmetricKey = decryptSymmetricKey(encryptedSymmetricKey, privateKeyWithout0x);
-    
-    // 5. Fetch the encrypted asset from Arweave
-    const { data: encryptedAsset, fileExtension } = await retrieveAssetFromArweave(arweaveTransactionId);
-    
-    // 6. Decrypt the asset
-    const decryptedAsset = decryptAsset(encryptedAsset, symmetricKey);
-    console.log(`Decrypted asset (${decryptedAsset.length} bytes)`);
-    
-    // 7. Save the decrypted file
-    saveFile(decryptedAsset, inheritanceId, fileExtension);
-    
-    console.log('\n✅ Inheritance claimed successfully!');
-    
-  } catch (error) {
-    console.error(`\n❌ Failed to claim inheritance: ${error.message}`);
-    throw error;
-  }
-}
-
-// =============================================================================
-// Main Program Loop
-// =============================================================================
-
-/**
- * Main execution function
- */
-async function main() {
-  console.log('=== Inheritor Beneficiary Claim Tool ===');
-  console.log('This tool allows you to claim inheritances and save the decrypted files.');
-  console.log('');
-  
-  try {
-    // Get beneficiary mnemonic and derive keys
-    const beneficiaryMnemonic = await question('Enter beneficiary recovery phrase (mnemonic): ');
-    const beneficiaryKeys = deriveKeysFromMnemonic(beneficiaryMnemonic);
-    console.log(`Beneficiary address: ${beneficiaryKeys.address}`);
-    
-    // Get gas wallet private key
-    const gasWalletKey = await question('Enter private key of wallet for gas payments: ');
-    
-    // Validate the gas wallet private key
-    let gasWallet;
     try {
-      gasWallet = new ethers.Wallet(gasWalletKey);
-      console.log(`Gas wallet address: ${gasWallet.address}`);
+        // 1. Import ML-KEM-768 private key from base64
+        const privateKey = Buffer.from(quantumPrivateKey, 'base64');
+
+        // 2. Decapsulate using ML-KEM-768 to get shared secret
+        const sharedSecret = ml_kem768.decapsulate(encapsulatedKey, privateKey);
+
+        // 3. Derive encryption key using HKDF with external recipient's salt
+        const info = Buffer.from(`wrap|v=1|kid=${externalRecipient.kid}|alg=AES-256-GCM`, 'utf8');
+        const encryptionKey = hkdf(Buffer.from(sharedSecret), externalRecipient.salt, info, 32);
+
+        // 4. Decrypt wrapped key using AES-GCM
+        // CloudFlare stores wrapped keys in format: nonce (12 bytes) + ciphertext + tag (16 bytes)
+        const nonce = Buffer.from(wrappedKey.subarray(0, 12));
+        const tag = Buffer.from(wrappedKey.subarray(-16));
+        const ciphertext = Buffer.from(wrappedKey.subarray(12, -16));
+
+        // Set up Additional Authenticated Data (AAD) as used during encryption
+        const aad = Buffer.from(`v=1|kid=${externalRecipient.kid}|type=mlkem768|purpose=wrap`, 'utf8');
+
+        const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, nonce);
+        decipher.setAuthTag(tag);
+        decipher.setAAD(aad);
+
+        let decrypted = decipher.update(ciphertext);
+        decrypted = Buffer.concat([decrypted, decipher.final()]);
+
+        return decrypted;
     } catch (error) {
-      throw new Error('Invalid private key for gas wallet');
+        throw new Error(`Symmetric key decryption failed: ${error.message}`);
     }
-    
-    // Select network
-    const networkChoice = await question('Select network (ethereum/arbitrum): ');
-    if (!['ethereum', 'arbitrum'].includes(networkChoice.toLowerCase())) {
-      throw new Error('Invalid network selection. Please choose "ethereum" or "arbitrum".');
-    }
-    
-    const networkConfig = NETWORK_CONFIGS[networkChoice.toLowerCase()];
-    console.log(`Selected network: ${networkConfig.name}`);
-    
-    // Set up provider
-    const provider = await setupProvider(networkConfig);
-    const signer = new ethers.Wallet(gasWalletKey, provider);
-    
-    // Get contract address
-    const contractAddress = await getContractAddressForNetwork(provider, networkConfig);
-    
-    // Create contract instance
-    console.log(`Using Inheritor contract at address: ${contractAddress}`);
-    const code = await provider.getCode(contractAddress);
-    if (code === '0x') {
-      throw new Error(`No contract found at address ${contractAddress}`);
-    }
-    const contract = new ethers.Contract(contractAddress, INHERITOR_ABI, signer);
-    
-    // Get inheritance ID
-    const inheritanceId = await question('Enter the Inheritance ID (hex string starting with 0x): ');
-    if (!/^0x[a-fA-F0-9]{64}$/.test(inheritanceId)) {
-      throw new Error('Invalid Inheritance ID format. Must be a 32-byte hex string with 0x prefix.');
-    }
-    
-    // Claim the inheritance
-    await claimInheritance({
-      inheritanceId,
-      beneficiaryKeys,
-      networkName: networkChoice.toLowerCase(),
-      contract,
-      provider,
-      signer
-    });
-    
-  } catch (error) {
-    console.error('\nError:', error.message);
-  } finally {
-    rl.close();
-  }
 }
 
-// Run the script
-main().catch(error => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+
+// =============================================================================
+// Main Claim Workflow
+// =============================================================================
+
+/**
+ * Claim an inheritance using quantum-safe cryptography
+ *
+ * Process:
+ * 1. Verify inheritance is claimable on the blockchain
+ * 2. Retrieve encrypted asset data from Arweave
+ * 3. Retrieve time-locked symmetric key from CloudFlare (with signature verification)
+ * 4. Decrypt symmetric key using ML-KEM-768 quantum-safe cryptography
+ * 5. Decrypt asset using AES-256-GCM with dual-recipient authentication
+ * 6. Save decrypted file to current directory
+ *
+ * @param {ethers.Contract} contract Inheritor smart contract instance
+ * @param {string} inheritanceId Inheritance ID (hex string)
+ * @param {string} networkName Network name ('ethereum' or 'arbitrum')
+ * @param {Object} keys Key object containing ethereum and quantum private keys
+ * @returns {Promise<string>} Path to the saved decrypted file
+ */
+async function claimInheritance(contract, inheritanceId, networkName, keys) {
+    try {
+        console.log('\n🚀 Starting inheritance claim process...');
+
+        // 1. Check inheritance state (using optimized contract call)
+        console.log('Verifying inheritance state...');
+        const inheritance = await contract.inheritances(inheritanceId);
+
+        // Convert state to number for comparison (ethers.js returns BigInt)
+        const currentState = Number(inheritance.state);
+
+        if (currentState !== INHERITANCE_STATES.CLAIMABLE) {
+            const stateName = STATE_NAMES[currentState] || `Unknown (${currentState})`;
+            console.log(`\n⚠️  Inheritance Status: ${stateName}`);
+
+            if (currentState === INHERITANCE_STATES.DESIGNATED) {
+                console.log(`📅 Scheduled transfer time: ${new Date(Number(inheritance.scheduledTransferTime) * 1000).toLocaleString()}`);
+                const now = new Date();
+                const transferTime = new Date(Number(inheritance.scheduledTransferTime) * 1000);
+
+                if (transferTime > now) {
+                    const timeUntil = Math.ceil((transferTime - now) / (1000 * 60 * 60 * 24));
+                    console.log(`⏳ Time until claimable: ${timeUntil} day(s)`);
+                } else {
+                    console.log(`⏰ This inheritance should now be claimable. It may need to be triggered on the blockchain.`);
+                }
+            } else if (currentState === INHERITANCE_STATES.CLAIMED) {
+                console.log(`✅ This inheritance has already been claimed.`);
+            } else if (currentState === INHERITANCE_STATES.REVOKED) {
+                console.log(`❌ This inheritance has been revoked by the testator.`);
+            } else if (currentState === INHERITANCE_STATES.PURGED) {
+                console.log(`🗑️  This inheritance has been purged from the system.`);
+            }
+
+            console.log(`\n💡 The inheritance must be in 'Claimable' state to be claimed.`);
+            return null; // Return null instead of throwing error
+        }
+
+        console.log(`✅ Inheritance is claimable`);
+        console.log(`   Testator: ${formatters.formatAddress(inheritance.testatorEOA)}`);
+        console.log(`   Beneficiary: ${formatters.formatAddress(inheritance.beneficiaryEOA)}`);
+
+        // 2. Get Arweave transaction ID
+        const arweaveTransactionId = ethers.hexlify(inheritance.arweaveTransactionId);
+        console.log(`Arweave transaction ID: ${arweaveTransactionId}`);
+
+        // 3. Fetch from Arweave (now JSON format)
+        const arweaveData = await retrieveAssetFromArweave(arweaveTransactionId);
+        console.log(`Retrieved encrypted data: ${formatters.formatBytes(arweaveData.encryptedData.length)}`);
+
+        // 4. Retrieve encrypted symmetric key from CloudFlare (with signature)
+        const encryptedSymmetricKey = await retrieveEncryptedSymmetricKey(
+            inheritanceId,
+            networkName,
+            keys.ethereum.privateKey
+        );
+        console.log(`Retrieved encrypted symmetric key: ${formatters.formatBytes(encryptedSymmetricKey.length)}`);
+
+        // 5. Decrypt symmetric key using ML-KEM-768 (dual-recipient format)
+        const symmetricKey = decryptSymmetricKeyDualRecipient(
+            encryptedSymmetricKey,  // This is the wrapped key from CloudFlare (external recipient)
+            arweaveData.encapsulatedKey,  // This is the ML-KEM-768 capsule from external recipient
+            arweaveData.externalRecipient,  // Contains salt and wrap nonce
+            keys.quantum.privateKey
+        );
+
+        // 5. Decrypt the asset using AES-256-GCM with dual-recipient AAD
+        console.log('Decrypting asset data...');
+
+        const payloadAAD = Buffer.from('v=1|alg=AES-256-GCM|recipients=2', 'utf8');
+
+        const decipher = crypto.createDecipheriv('aes-256-gcm', symmetricKey, arweaveData.nonce);
+        decipher.setAuthTag(arweaveData.tag);
+        decipher.setAAD(payloadAAD);
+
+        let decryptedAsset = decipher.update(arweaveData.encryptedData);
+        decryptedAsset = Buffer.concat([decryptedAsset, decipher.final()]);
+        console.log(`Decrypted asset size: ${formatters.formatBytes(decryptedAsset.length)}`);
+
+        // 6. Save file with proper extension
+        const filename = `inheritance_${inheritanceId.slice(2, 10)}.${arweaveData.fileType}`;
+        const filepath = path.join(process.cwd(), filename);
+        fs.writeFileSync(filepath, decryptedAsset);
+        console.log(`\n✅ Asset saved successfully: ${filename}`);
+
+        return filepath;
+    } catch (error) {
+        throw errorHandlers.handleContractError(error, 'claim inheritance');
+    }
+}
+
+// =============================================================================
+// Main Function
+// =============================================================================
+
+async function main() {
+    console.log('==========================================');
+    console.log('  Inheritor Claim Tool v2.0');
+    console.log('  Quantum-Safe Implementation');
+    console.log('==========================================\n');
+
+    try {
+        // 1. Load keys using shared utilities
+        console.log('Loading beneficiary keys...');
+        const ethereumKeys = keyUtils.loadBeneficiaryKeysFromFile();
+        const quantumKeys = keyUtils.loadBeneficiaryQuantumKeys();
+
+        const keys = {
+            ethereum: ethereumKeys,
+            quantum: quantumKeys
+        };
+
+        console.log(`Beneficiary address: ${ethereumKeys.address}`);
+
+        // 2. Load gas wallet from .env (for consistency with other scripts)
+        const gasPrivateKey = process.env.GAS_WALLET_PRIVATE_KEY;
+        if (!gasPrivateKey) {
+            console.log('⚠️  Note: GAS_WALLET_PRIVATE_KEY not found in .env file (not needed for claiming)');
+        } else {
+            const gasWallet = new ethers.Wallet(gasPrivateKey);
+            console.log(`Gas wallet address: ${gasWallet.address}`);
+        }
+
+        // 3. Network selection
+        console.log('\n📡 Select network:');
+        console.log('1. Ethereum');
+        console.log('2. Arbitrum');
+        const networkChoice = await question('Your choice (1-2): ');
+
+        const networkConfig = networkChoice === '1'
+            ? NETWORK_CONFIGS.ethereum
+            : NETWORK_CONFIGS.arbitrum;
+        const networkName = networkChoice === '1' ? 'ethereum' : 'arbitrum';
+
+        // 4. Set up provider using shared utilities
+        const provider = await networkUtils.setupProvider(networkConfig, question);
+
+        // 5. Get contract address using shared utilities
+        const contractAddress = await networkUtils.getContractAddressForNetwork(
+            provider,
+            networkConfig,
+            question
+        );
+
+        // 6. Create contract instance with shared ABI
+        const contract = new ethers.Contract(
+            contractAddress,
+            CONTRACT_ABIS.INHERITOR_ABI,
+            provider
+        );
+
+        console.log(`\n✅ Connected to Inheritor contract: ${contractAddress}`);
+
+        // 7. Get inheritance ID
+        const inheritanceId = await question('\n🔑 Enter the inheritance ID to claim (0x...): ');
+
+        if (!inheritanceId.startsWith('0x') || inheritanceId.length !== 66) {
+            throw new Error('Invalid inheritance ID format (expected 0x followed by 64 hex characters)');
+        }
+
+        // 8. Execute claim
+        const savedPath = await claimInheritance(contract, inheritanceId, networkName, keys);
+
+        if (savedPath) {
+            console.log('\n🎉 Inheritance claimed successfully!');
+            console.log(`📁 File saved to: ${savedPath}`);
+        } else {
+            console.log('\n🔄 You can try again when the inheritance becomes claimable.');
+        }
+
+    } catch (error) {
+        console.error(`\n❌ Error: ${error.message}`);
+        if (error.stack && process.env.DEBUG) {
+            console.error('Stack trace:', error.stack);
+        }
+    } finally {
+        rl.close();
+    }
+}
+
+// =============================================================================
+// Module Exports & Execution
+// =============================================================================
+
+// Run if executed directly
+if (require.main === module) {
+    main();
+}
+
+// Export functions for testing
+module.exports = {
+    claimInheritance,
+    decryptSymmetricKeyDualRecipient,
+    retrieveAssetFromArweave,
+    retrieveEncryptedSymmetricKey,
+    generateAppSignature,
+    hkdf
+};
