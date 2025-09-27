@@ -160,6 +160,21 @@ const formatters = {
             ethValue = `${parts[0]}.${parts[1].substring(0, 6)}`;
         }
         return ethValue;
+    },
+
+    /**
+     * Format bytes to readable size
+     * @param {number} bytes Number of bytes
+     * @returns {string} Formatted size string
+     */
+    formatBytes: function(bytes) {
+        if (bytes === 0) return '0 Bytes';
+
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 };
 
@@ -733,6 +748,66 @@ const keyUtils = {
             }
             throw error;
         }
+    },
+
+    /**
+     * Load beneficiary quantum-safe keys from exported JSON key file
+     * @param {string} keysDir Directory containing key files (defaults to ../keys)
+     * @returns {Object} Object containing privateKey and publicKey (base64 strings)
+     */
+    loadBeneficiaryQuantumKeys: function(keysDir = null) {
+        if (!keysDir) {
+            keysDir = path.join(__dirname, '..', '..', 'keys');
+        }
+
+        // Check if keys directory exists
+        if (!fs.existsSync(keysDir)) {
+            throw new Error(`Keys directory not found at ${keysDir}. Please create the directory and place your exported key file there.`);
+        }
+
+        // Find InheritorKeys_*.json files
+        const files = fs.readdirSync(keysDir).filter(file =>
+            file.startsWith('InheritorKeys_') && file.endsWith('.json')
+        );
+
+        if (files.length === 0) {
+            throw new Error(`No InheritorKeys_*.json files found in ${keysDir}. Please export your keys from the iOS app and place the file there.`);
+        }
+
+        // Use the most recent file (lexicographically, which works for YYYY-MM-DD format)
+        const keyFile = files.sort().reverse()[0];
+        const keyFilePath = path.join(keysDir, keyFile);
+
+        console.log(`Loading quantum keys from: ${keyFile}`);
+
+        try {
+            // Read and parse the JSON file
+            const keyFileContent = fs.readFileSync(keyFilePath, 'utf8');
+            const keyData = JSON.parse(keyFileContent);
+
+            // Validate the JSON structure for beneficiary quantum keys
+            if (!keyData.beneficiary || !keyData.beneficiary.quantumSafe) {
+                throw new Error('Invalid key file format: missing beneficiary.quantumSafe section');
+            }
+
+            const quantumKeys = keyData.beneficiary.quantumSafe;
+
+            // Validate required fields
+            if (!quantumKeys.privateKey || !quantumKeys.publicKey) {
+                throw new Error('Invalid key file format: missing quantum keys');
+            }
+
+            return {
+                privateKey: quantumKeys.privateKey, // base64 encoded quantum private key
+                publicKey: quantumKeys.publicKey    // base64 encoded quantum public key
+            };
+
+        } catch (error) {
+            if (error.message.includes('JSON')) {
+                throw new Error(`Failed to parse key file: ${error.message}`);
+            }
+            throw error;
+        }
     }
 };
 
@@ -742,73 +817,198 @@ const keyUtils = {
 
 const walletUtils = {
     /**
-     * Ensures a wallet has sufficient funds for operations, transferring from gas wallet if needed
-     * @param {Object} walletKeys - Object containing {address, privateKey, publicKey}
+     * Interactive wallet funding function for menu-driven scripts
+     * @param {Object} targetWalletKeys - Object containing {address, privateKey, publicKey}
      * @param {ethers.Wallet} gasWallet - Gas wallet for funding transfers
      * @param {ethers.Provider} provider - Network provider
-     * @param {bigint} requiredAmount - Required amount in wei
-     * @param {string} operationName - Name of operation for user messages
+     * @param {string} walletRole - Role name for display ("Beneficiary", "Testator", etc.)
      * @param {Function} questionFn - Question function for user input
-     * @returns {Promise<ethers.Wallet>} Funded wallet instance
+     * @returns {Promise<void>}
      */
-    ensureWalletFunding: async function(walletKeys, gasWallet, provider, requiredAmount, operationName, questionFn) {
-        // Create wallet instance
-        const wallet = new ethers.Wallet(walletKeys.privateKey, provider);
+    fundWallet: async function(targetWalletKeys, gasWallet, provider, walletRole, questionFn) {
+        console.log(`\n=== Fund ${walletRole} Wallet ===`);
 
-        // Check current balance
-        const currentBalance = await provider.getBalance(wallet.address);
-        console.log(`${operationName} wallet balance: ${ethers.formatEther(currentBalance)} ETH`);
+        // Create target wallet instance
+        const targetWallet = new ethers.Wallet(targetWalletKeys.privateKey, provider);
 
-        // Check if funding is needed
-        if (currentBalance >= requiredAmount) {
-            return wallet; // Already has sufficient funds
+        // Get current balances
+        const targetBalance = await provider.getBalance(targetWallet.address);
+        const gasBalance = await provider.getBalance(gasWallet.address);
+
+        console.log(`\n📊 Current Balances:`);
+        console.log(`${walletRole} wallet (${targetWallet.address}): ${ethers.formatEther(targetBalance)} ETH`);
+        console.log(`Gas wallet (${gasWallet.address}): ${ethers.formatEther(gasBalance)} ETH`);
+
+        if (gasBalance === 0n) {
+            console.log('\n❌ Gas wallet has no funds available for transfer.');
+            return;
         }
 
-        console.log(`\n${operationName} wallet needs funding for gas.`);
+        // Suggest transfer amounts
+        console.log('\n💡 Suggested amounts:');
+        console.log('1. 0.001 ETH (small transactions)');
+        console.log('2. 0.005 ETH (multiple transactions)');
+        console.log('3. 0.01 ETH (extended usage)');
+        console.log('4. Custom amount');
+        console.log('5. Cancel');
 
-        // Calculate funding amount with safety buffer
-        const fundAmount = requiredAmount * BigInt(GAS_CONSTANTS.FUNDING_MULTIPLIER);
+        const choice = await questionFn('Select option (1-5): ');
 
-        const fundConfirmation = await questionFn(
-            `Do you want to transfer ${ethers.formatEther(fundAmount)} ETH from gas wallet to ${operationName.toLowerCase()} wallet? (yes/no): `
-        );
-
-        if (fundConfirmation.toLowerCase() !== 'yes') {
-            throw new Error(`${operationName} cancelled: wallet needs ETH for gas`);
+        let transferAmount;
+        switch (choice) {
+            case '1':
+                transferAmount = ethers.parseEther('0.001');
+                break;
+            case '2':
+                transferAmount = ethers.parseEther('0.005');
+                break;
+            case '3':
+                transferAmount = ethers.parseEther('0.01');
+                break;
+            case '4':
+                const customAmount = await questionFn('Enter amount in ETH: ');
+                try {
+                    transferAmount = ethers.parseEther(customAmount);
+                } catch (error) {
+                    console.log('❌ Invalid amount format.');
+                    return;
+                }
+                break;
+            case '5':
+                console.log('Transfer cancelled.');
+                return;
+            default:
+                console.log('❌ Invalid choice.');
+                return;
         }
 
-        // Check gas wallet balance
-        const gasWalletBalance = await provider.getBalance(gasWallet.address);
-        console.log(`Gas wallet balance: ${ethers.formatEther(gasWalletBalance)} ETH`);
-
-        if (gasWalletBalance < fundAmount) {
-            console.error(`\n⚠️ ERROR: Gas wallet has insufficient funds`);
-            console.log(`Required: ${ethers.formatEther(fundAmount)} ETH`);
-            console.log(`Available: ${ethers.formatEther(gasWalletBalance)} ETH`);
-            console.log(`\nPlease fund your gas wallet with at least ${ethers.formatEther(fundAmount - gasWalletBalance)} more ETH to continue.`);
-            throw new Error('Insufficient funds in gas wallet');
+        // Validate gas wallet has enough funds
+        if (gasBalance < transferAmount) {
+            console.log(`❌ Gas wallet has insufficient funds.`);
+            console.log(`Required: ${ethers.formatEther(transferAmount)} ETH`);
+            console.log(`Available: ${ethers.formatEther(gasBalance)} ETH`);
+            return;
         }
 
-        // Transfer funds
-        console.log(`\nTransferring funds to ${operationName.toLowerCase()} wallet...`);
-        const fundingTx = await gasWallet.sendTransaction({
-            to: wallet.address,
-            value: fundAmount
-        });
+        // Final confirmation
+        console.log(`\n💸 Transfer ${ethers.formatEther(transferAmount)} ETH to ${walletRole.toLowerCase()} wallet?`);
+        const confirmation = await questionFn('Confirm (yes/no): ');
 
-        console.log(`Funding transaction sent: ${fundingTx.hash}`);
-        console.log(`Waiting for transaction confirmation...`);
-        await fundingTx.wait();
-
-        // Verify the new balance
-        const newBalance = await provider.getBalance(wallet.address);
-        console.log(`New ${operationName.toLowerCase()} wallet balance: ${ethers.formatEther(newBalance)} ETH`);
-
-        if (newBalance < requiredAmount) {
-            throw new Error(`${operationName} wallet still has insufficient funds after transfer`);
+        if (confirmation.toLowerCase() !== 'yes') {
+            console.log('Transfer cancelled.');
+            return;
         }
 
-        return wallet;
+        // Execute transfer
+        try {
+            console.log('\nTransferring funds...');
+            const tx = await gasWallet.sendTransaction({
+                to: targetWallet.address,
+                value: transferAmount
+            });
+
+            console.log(`Transaction sent: ${tx.hash}`);
+            console.log('Waiting for confirmation...');
+            await tx.wait();
+
+            // Show new balances
+            const newTargetBalance = await provider.getBalance(targetWallet.address);
+            const newGasBalance = await provider.getBalance(gasWallet.address);
+
+            console.log('\n✅ Transfer completed!');
+            console.log(`New ${walletRole.toLowerCase()} wallet balance: ${ethers.formatEther(newTargetBalance)} ETH`);
+            console.log(`New gas wallet balance: ${ethers.formatEther(newGasBalance)} ETH`);
+
+        } catch (error) {
+            console.error(`❌ Transfer failed: ${error.message}`);
+        }
+    },
+
+    /**
+     * Refund remaining ETH from a wallet back to the gas wallet
+     * @param {Object} sourceWalletKeys - Object containing {address, privateKey, publicKey}
+     * @param {string} gasWalletAddress - Gas wallet address to refund to
+     * @param {ethers.Provider} provider - Network provider
+     * @param {string} walletRole - Role name for display ("Beneficiary", "Testator", etc.)
+     * @param {Function} questionFn - Question function for user input
+     * @returns {Promise<void>}
+     */
+    refundWallet: async function(sourceWalletKeys, gasWalletAddress, provider, walletRole, questionFn) {
+        console.log(`\n=== Refund ${walletRole} Wallet ===`);
+
+        try {
+            // Create source wallet
+            const sourceWallet = new ethers.Wallet(sourceWalletKeys.privateKey, provider);
+
+            // Get current balance
+            const balance = await provider.getBalance(sourceWallet.address);
+            console.log(`\n${walletRole} wallet (${sourceWallet.address}) balance: ${ethers.formatEther(balance)} ETH`);
+
+            // Check if there are any funds to refund
+            if (balance <= 0) {
+                console.log('No funds to refund.');
+                return;
+            }
+
+            // Define minimum refundable amount
+            const minimumRefundable = ethers.parseEther(GAS_CONSTANTS.MIN_REFUNDABLE_AMOUNT);
+
+            if (balance < minimumRefundable) {
+                console.log(`Balance too low to refund reliably (less than ${GAS_CONSTANTS.MIN_REFUNDABLE_AMOUNT} ETH).`);
+                console.log(`For very small amounts, the gas cost approaches or exceeds the refund value.`);
+                return;
+            }
+
+            // Ask for confirmation
+            const confirmation = await questionFn(`Do you want to refund ${ethers.formatEther(balance)} ETH to gas wallet (${gasWalletAddress})? (yes/no): `);
+
+            if (confirmation.toLowerCase() !== 'yes') {
+                console.log('Refund cancelled.');
+                return;
+            }
+
+            // Calculate gas costs
+            const gasPrice = (await provider.getFeeData()).gasPrice;
+            const gasLimit = BigInt(GAS_CONSTANTS.STANDARD_TRANSFER_GAS);
+            const gasCost = gasPrice * gasLimit;
+
+            console.log(`Estimated gas cost: ${ethers.formatEther(gasCost)} ETH`);
+
+            if (balance <= gasCost) {
+                console.log('Balance too low to cover gas costs. Cannot refund.');
+                return;
+            }
+
+            // Calculate refund amount (leave buffer for gas price fluctuations)
+            const buffer = gasCost * BigInt(Math.floor(GAS_CONSTANTS.REFUND_BUFFER_MULTIPLIER * 10)) / BigInt(10);
+            const refundAmount = balance - buffer;
+
+            console.log(`\nSending ${ethers.formatEther(refundAmount)} ETH back to gas wallet...`);
+            console.log(`(Keeping ${ethers.formatEther(buffer)} ETH for gas)`);
+
+            // Execute refund transaction
+            const tx = await sourceWallet.sendTransaction({
+                to: gasWalletAddress,
+                value: refundAmount,
+                gasLimit: gasLimit
+            });
+
+            console.log(`Refund transaction sent: ${tx.hash}`);
+            console.log('Waiting for confirmation...');
+
+            await tx.wait();
+
+            // Show new balances
+            const newSourceBalance = await provider.getBalance(sourceWallet.address);
+            const newGasBalance = await provider.getBalance(gasWalletAddress);
+
+            console.log(`\n✅ Refund complete!`);
+            console.log(`New ${walletRole.toLowerCase()} wallet balance: ${ethers.formatEther(newSourceBalance)} ETH`);
+            console.log(`New gas wallet balance: ${ethers.formatEther(newGasBalance)} ETH`);
+
+        } catch (error) {
+            console.error(`\n❌ ERROR during refund: ${error.message}`);
+        }
     }
 };
 

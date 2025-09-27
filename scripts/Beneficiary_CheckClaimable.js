@@ -57,18 +57,6 @@ const loadBeneficiaryKeysFromFile = keyUtils.loadBeneficiaryKeysFromFile;
 // Formatting function now uses shared utility
 const formatTimestamp = formatters.formatTimestamp;
 
-/**
- * Ensures a wallet has sufficient funds for operations, transferring from gas wallet if needed
- * @param {Object} walletKeys - Object containing {address: string, privateKey: string, publicKey: string}
- * @param {ethers.Wallet} gasWallet - Gas wallet for funding transfers
- * @param {ethers.Provider} provider - Network provider
- * @param {bigint} requiredAmount - Required amount in wei
- * @param {string} operationName - Name of operation for user messages
- * @returns {Promise<ethers.Wallet>} Funded wallet instance
- */
-// Wallet funding function now uses shared utility
-const ensureWalletFunding = (walletKeys, gasWallet, provider, requiredAmount, operationName) =>
-  walletUtils.ensureWalletFunding(walletKeys, gasWallet, provider, requiredAmount, operationName, question);
 
 // =============================================================================
 // Blockchain & Network Functions
@@ -148,25 +136,16 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
       return;
     }
 
-    console.log(`Found ${inheritanceIds.length} inheritance(s). Fetching complete data...`);
+    console.log(`Found ${inheritanceIds.length} inheritance(s). Fetching details...`);
 
-    // Use exportContractForMigration to get all data in one call
-    let inheritances = [];
-    try {
-      console.log('Fetching inheritance details using exportContractForMigration...');
-      const migrationData = await contract.exportContractForMigration(inheritanceIds);
-      inheritances = contractUtils.processMigrationDataToInheritances(migrationData);
-      console.log(`✅ Successfully loaded ${inheritances.length} inheritance details`);
-    } catch (migrationError) {
-      console.log('⚠️ exportContractForMigration failed, falling back to individual queries...');
-      // Fallback to individual queries
-      for (const inheritanceId of inheritanceIds) {
-        try {
-          const details = await getInheritanceDetails(contract, inheritanceId);
-          inheritances.push(details);
-        } catch (error) {
-          console.log(`   Error fetching details for inheritance ${inheritanceId}: ${error.message}`);
-        }
+    // Fetch details for each inheritance
+    const inheritances = [];
+    for (const inheritanceId of inheritanceIds) {
+      try {
+        const details = await getInheritanceDetails(contract, inheritanceId);
+        inheritances.push(details);
+      } catch (error) {
+        console.log(`Error fetching details for inheritance ${inheritanceId}: ${error.message}`);
       }
     }
 
@@ -174,8 +153,8 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
     let index = 1;
 
     for (const inheritance of inheritances) {
-      // Only display if not revoked
-      if (inheritance.state !== INHERITANCE_STATES.REVOKED) {
+      // Only display if not revoked (convert BigInt to Number for comparison)
+      if (Number(inheritance.state) !== INHERITANCE_STATES.REVOKED) {
         console.log(`\n${index}. Inheritance ID: ${inheritance.id}`);
         console.log(`   Testator: ${inheritance.testatorEOA}`);
         console.log(`   State: ${inheritance.stateName}`);
@@ -281,54 +260,13 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
     
     console.log(`Estimated gas cost: ${ethers.formatEther(gasCost)} ETH`);
     
-    // Check if beneficiary needs funding
+    // Check if beneficiary has sufficient funds
     if (beneficiaryBalance < gasCost) {
-      console.log(`\nBeneficiary wallet needs funding for gas`);
-      
-      // Ask if user wants to fund the beneficiary wallet
-      const fundConfirmation = await question(`Do you want to transfer ${ethers.formatEther(gasCost * BigInt(2))} ETH from gas wallet to beneficiary wallet? (yes/no): `);
-      
-      if (fundConfirmation.toLowerCase() === 'yes') {
-        try {
-          console.log(`\nTransferring funds to beneficiary wallet...`);
-          
-          // Get gas wallet balance
-          const gasWalletBalance = await provider.getBalance(signer.address);
-          console.log(`Gas wallet balance: ${ethers.formatEther(gasWalletBalance)} ETH`);
-          
-          // Check if gas wallet has enough funds
-          const transferAmount = gasCost * BigInt(2);
-          if (gasWalletBalance < transferAmount) {
-            console.error(`\n⚠️ ERROR: Gas wallet has insufficient funds`);
-            console.log(`Required: ${ethers.formatEther(transferAmount)} ETH`);
-            console.log(`Available: ${ethers.formatEther(gasWalletBalance)} ETH`);
-            throw new Error('Insufficient funds in gas wallet');
-          }
-          
-          // Transfer double the estimated gas cost to be safe
-          const fundingTx = await signer.sendTransaction({
-            to: beneficiaryWallet.address,
-            value: transferAmount
-          });
-          
-          console.log(`Funding transaction sent: ${fundingTx.hash}`);
-          console.log(`Waiting for transaction confirmation...`);
-          await fundingTx.wait();
-          
-          // Verify the new balance
-          const newBalance = await provider.getBalance(beneficiaryWallet.address);
-          console.log(`New beneficiary wallet balance: ${ethers.formatEther(newBalance)} ETH`);
-          
-          if (newBalance < gasCost) {
-            throw new Error('Beneficiary wallet still has insufficient funds after transfer');
-          }
-        } catch (error) {
-          console.error(`\n⚠️ ERROR: Failed to transfer funds: ${error.message}`);
-          throw new Error('Fund transfer failed');
-        }
-      } else {
-        throw new Error('Check cancelled: beneficiary wallet needs ETH for gas');
-      }
+      console.log(`\n⚠️ Insufficient funds for transaction.`);
+      console.log(`Required: ${ethers.formatEther(gasCost)} ETH`);
+      console.log(`Available: ${ethers.formatEther(beneficiaryBalance)} ETH`);
+      console.log(`\n💡 Please use menu option 3 to fund your beneficiary wallet, then try again.`);
+      return;
     }
     
     // Now call isClaimable
@@ -356,9 +294,21 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
     } else {
       console.log('\n❌ RESULT: This inheritance is NOT YET CLAIMABLE.');
       console.log('Possible reasons:');
+
+      // Check if testator has a verifier configured
+      let hasVerifier = false;
+      try {
+        const verifierAddress = await contract.testatorVerifier(updatedDetails.testatorEOA);
+        hasVerifier = verifierAddress !== ethers.ZeroAddress;
+      } catch (error) {
+        console.log('Could not check verifier status');
+      }
+
       console.log('- The testator has recently checked in');
       console.log('- The grace period has not expired');
-      console.log('- Verification is required but not completed');
+      if (hasVerifier) {
+        console.log('- Verification is required but not completed');
+      }
     }
     
   } catch (error) {
@@ -372,86 +322,6 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
   }
 }
 
-/**
- * Refund remaining ETH to gas wallet
- * Transfers unused ETH from the beneficiary wallet back to the gas wallet
- *
- * @param {Object} beneficiaryKeys - Object containing {address: string, privateKey: string, publicKey: string}
- * @param {string} gasWalletAddress - Gas wallet Ethereum address (0x...)
- * @param {ethers.Provider} provider - Network provider (JsonRpcProvider)
- */
-async function refundRemainingEth(beneficiaryKeys, gasWalletAddress, provider) {
-  try {
-    // Create beneficiary wallet
-    const beneficiaryWallet = new ethers.Wallet(beneficiaryKeys.privateKey, provider);
-    
-    // Get current balance
-    const balance = await provider.getBalance(beneficiaryWallet.address);
-    console.log(`\nBeneficiary wallet (${beneficiaryWallet.address}) balance: ${ethers.formatEther(balance)} ETH`);
-    
-    // Define minimum refundable amount
-    const minimumRefundable = ethers.parseEther(GAS_CONSTANTS.MIN_REFUNDABLE_AMOUNT);
-    
-    if (balance <= 0) {
-      console.log('No funds to refund.');
-      return;
-    }
-    
-    if (balance < minimumRefundable) {
-      console.log(`Balance too low to refund reliably (less than 0.001 ETH).`);
-      console.log(`For very small amounts, the gas cost approaches or exceeds the refund value.`);
-      return;
-    }
-    
-    const confirmation = await question(`Do you want to refund ${ethers.formatEther(balance)} ETH to gas wallet (${gasWalletAddress})? (yes/no): `);
-    
-    if (confirmation.toLowerCase() !== 'yes') {
-      console.log('Refund cancelled.');
-      return;
-    }
-    
-    // We need to leave some ETH for gas
-    const gasPrice = (await provider.getFeeData()).gasPrice;
-    const gasLimit = BigInt(GAS_CONSTANTS.STANDARD_TRANSFER_GAS);
-    const gasCost = gasPrice * gasLimit;
-    
-    console.log(`Estimated gas cost: ${ethers.formatEther(gasCost)} ETH`);
-    
-    if (balance <= gasCost) {
-      console.log('Balance too low to cover gas costs. Cannot refund.');
-      return;
-    }
-    
-    // Calculate refund amount (leave some buffer for gas price fluctuations)
-    const buffer = gasCost * BigInt(Math.floor(GAS_CONSTANTS.REFUND_BUFFER_MULTIPLIER * 10)) / BigInt(10);
-    const refundAmount = balance - buffer;
-    
-    console.log(`\nSending ${ethers.formatEther(refundAmount)} ETH back to gas wallet...`);
-    console.log(`(Keeping ${ethers.formatEther(buffer)} ETH for gas)`);
-    
-    const tx = await beneficiaryWallet.sendTransaction({
-      to: gasWalletAddress,
-      value: refundAmount,
-      gasLimit: gasLimit
-    });
-    
-    console.log(`Refund transaction sent: ${tx.hash}`);
-    console.log('Waiting for confirmation...');
-    
-    await tx.wait();
-    
-    // Check new balances
-    const newBeneficiaryBalance = await provider.getBalance(beneficiaryWallet.address);
-    const newGasWalletBalance = await provider.getBalance(gasWalletAddress);
-    
-    console.log(`\nRefund complete!`);
-    console.log(`New beneficiary wallet balance: ${ethers.formatEther(newBeneficiaryBalance)} ETH`);
-    console.log(`New gas wallet balance: ${ethers.formatEther(newGasWalletBalance)} ETH`);
-    
-  } catch (error) {
-    console.error(`\n⚠️ ERROR during refund: ${error.message}`);
-  }
-}
 
 // =============================================================================
 // Main Program Loop
@@ -508,12 +378,18 @@ async function main() {
     }
     
     // Select network
-    const networkChoice = await question('Select network (ethereum/arbitrum): ');
-    if (!['ethereum', 'arbitrum'].includes(networkChoice.toLowerCase())) {
-      throw new Error('Invalid network selection. Please choose "ethereum" or "arbitrum".');
+    console.log('\n📡 Select network:');
+    console.log('1. Ethereum');
+    console.log('2. Arbitrum');
+    const networkChoice = await question('Your choice (1-2): ');
+
+    if (!['1', '2'].includes(networkChoice)) {
+      throw new Error('Invalid network selection. Please choose 1 or 2.');
     }
-    
-    const networkConfig = NETWORK_CONFIGS[networkChoice.toLowerCase()];
+
+    const networkConfig = networkChoice === '1'
+      ? NETWORK_CONFIGS.ethereum
+      : NETWORK_CONFIGS.arbitrum;
     console.log(`Selected network: ${networkConfig.name}`);
     
     // Set up provider
@@ -538,9 +414,10 @@ async function main() {
       const action = await question(
         '1. Show received Inheritances\n' +
         '2. Check if inheritance is claimable\n' +
-        '3. Refund remaining ETH to gas wallet\n' +
-        '4. Exit\n' +
-        'Choose an action (1-4): '
+        '3. Fund beneficiary wallet\n' +
+        '4. Refund remaining ETH to gas wallet\n' +
+        '5. Exit\n' +
+        'Choose an action (1-5): '
       );
       
       switch (action) {
@@ -560,18 +437,23 @@ async function main() {
           break;
           
         case '3':
-          // Refund remaining ETH
-          await refundRemainingEth(beneficiaryKeys, signer.address, provider);
+          // Fund beneficiary wallet
+          await walletUtils.fundWallet(beneficiaryKeys, signer, provider, "Beneficiary", question);
           break;
-          
+
         case '4':
+          // Refund remaining ETH
+          await walletUtils.refundWallet(beneficiaryKeys, signer.address, provider, "Beneficiary", question);
+          break;
+
+        case '5':
           // Exit
           console.log('Exiting...');
           running = false;
           break;
-          
+
         default:
-          console.log('Invalid choice. Please select 1-4.');
+          console.log('Invalid choice. Please select 1-5.');
       }
     }
   } catch (error) {

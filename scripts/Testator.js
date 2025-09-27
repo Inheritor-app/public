@@ -59,18 +59,6 @@ const loadTestatorKeysFromFile = keyUtils.loadTestatorKeysFromFile;
 const formatDuration = formatters.formatDuration;
 const formatTimestamp = formatters.formatTimestamp;
 
-/**
- * Ensures a wallet has sufficient funds for operations, transferring from gas wallet if needed
- * @param {Object} walletKeys - Object containing {address, privateKey, publicKey}
- * @param {ethers.Wallet} gasWallet - Gas wallet for funding transfers
- * @param {ethers.Provider} provider - Network provider
- * @param {bigint} requiredAmount - Required amount in wei
- * @param {string} operationName - Name of operation for user messages
- * @returns {Promise<ethers.Wallet>} Funded wallet instance
- */
-// Wallet funding function now uses shared utility
-const ensureWalletFunding = (walletKeys, gasWallet, provider, requiredAmount, operationName) =>
-  walletUtils.ensureWalletFunding(walletKeys, gasWallet, provider, requiredAmount, operationName, question);
 
 // =============================================================================
 // Blockchain & Network Functions
@@ -284,8 +272,8 @@ async function viewDigitalWill(contract, testatorAddress) {
     console.log('\n=== Inheritances ===');
 
     for (const inheritance of inheritances) {
-      // Skip displaying purged inheritances
-      if (inheritance.state === INHERITANCE_STATES.PURGED) {
+      // Skip displaying purged inheritances (convert BigInt to Number for comparison)
+      if (Number(inheritance.state) === INHERITANCE_STATES.PURGED) {
         continue;
       }
 
@@ -458,8 +446,8 @@ async function revokeAllInheritances(contract, testatorKeys, signer, provider, c
     // Process revocations using testator wallet
     for (const inheritance of inheritances) {
       // Only try to revoke inheritances that are in Designated state
-      // Skip those that are Claimable, Claimed, Revoked, or Purged
-      if (inheritance.state === INHERITANCE_STATES.DESIGNATED) {
+      // Skip those that are Claimable, Claimed, Revoked, or Purged (convert BigInt to Number for comparison)
+      if (Number(inheritance.state) === INHERITANCE_STATES.DESIGNATED) {
         try {
           console.log(`Revoking inheritance ${inheritance.id}...`);
           const tx = await testatorContract.revokeInheritance(inheritance.id, {
@@ -781,87 +769,6 @@ async function removeVerifier(testatorKeys, signer, provider, contractAddress) {
   }
 }
 
-/**
- * Refund remaining ETH to gas wallet
- * Transfers unused ETH from the testator wallet back to the gas wallet
- *
- * @param {Object} testatorKeys - Object containing {address: string, privateKey: string, publicKey: string}
- * @param {string} gasWalletAddress - Gas wallet Ethereum address (0x...)
- * @param {ethers.Provider} provider - Network provider (JsonRpcProvider)
- */
-async function refundRemainingEth(testatorKeys, gasWalletAddress, provider) {
-  try {
-    // Create testator wallet
-    const testatorWallet = new ethers.Wallet(testatorKeys.privateKey, provider);
-    
-    // Get current balance
-    const balance = await provider.getBalance(testatorWallet.address);
-    console.log(`\nTestator wallet (${testatorWallet.address}) balance: ${ethers.formatEther(balance)} ETH`);
-    
-    // Define minimum refundable amount
-    const minimumRefundable = ethers.parseEther(GAS_CONSTANTS.MIN_REFUNDABLE_AMOUNT);
-    
-    if (balance <= 0) {
-      console.log('No funds to refund.');
-      return;
-    }
-    
-    if (balance < minimumRefundable) {
-      console.log(`Balance too low to refund reliably (less than 0.001 ETH).`);
-      console.log(`For very small amounts, the gas cost approaches or exceeds the refund value.`);
-      console.log(`Consider this amount (${ethers.formatEther(balance)} ETH) as network operation cost.`);
-      return;
-    }
-    
-    const confirmation = await question(`Do you want to refund ${ethers.formatEther(balance)} ETH to gas wallet (${gasWalletAddress})? (yes/no): `);
-    
-    if (confirmation.toLowerCase() !== 'yes') {
-      console.log('Refund cancelled.');
-      return;
-    }
-    
-    // We need to leave some ETH for gas
-    const gasPrice = (await provider.getFeeData()).gasPrice;
-    const gasLimit = BigInt(GAS_CONSTANTS.STANDARD_TRANSFER_GAS);
-    const gasCost = gasPrice * gasLimit;
-    
-    console.log(`Estimated gas cost: ${ethers.formatEther(gasCost)} ETH`);
-    
-    if (balance <= gasCost) {
-      console.log('Balance too low to cover gas costs. Cannot refund.');
-      return;
-    }
-    
-    // Calculate refund amount (leave some buffer for gas price fluctuations)
-    const buffer = gasCost * BigInt(Math.floor(GAS_CONSTANTS.REFUND_BUFFER_MULTIPLIER * 10)) / BigInt(10);
-    const refundAmount = balance - buffer;
-    
-    console.log(`\nSending ${ethers.formatEther(refundAmount)} ETH back to gas wallet...`);
-    console.log(`(Keeping ${ethers.formatEther(buffer)} ETH for gas)`);
-    
-    const tx = await testatorWallet.sendTransaction({
-      to: gasWalletAddress,
-      value: refundAmount,
-      gasLimit: gasLimit
-    });
-    
-    console.log(`Refund transaction sent: ${tx.hash}`);
-    console.log('Waiting for confirmation...');
-    
-    await tx.wait();
-    
-    // Check new balances
-    const newTestatorBalance = await provider.getBalance(testatorWallet.address);
-    const newGasWalletBalance = await provider.getBalance(gasWalletAddress);
-    
-    console.log(`\nRefund complete!`);
-    console.log(`New testator wallet balance: ${ethers.formatEther(newTestatorBalance)} ETH`);
-    console.log(`New gas wallet balance: ${ethers.formatEther(newGasWalletBalance)} ETH`);
-    
-  } catch (error) {
-    console.error(`\n⚠️ ERROR during refund: ${error.message}`);
-  }
-}
 
 // =============================================================================
 // Main Program Loop
@@ -918,12 +825,18 @@ async function main() {
     }
     
     // Select network
-    const networkChoice = await question('Select network (ethereum/arbitrum): ');
-    if (!['ethereum', 'arbitrum'].includes(networkChoice.toLowerCase())) {
-      throw new Error('Invalid network selection. Please choose "ethereum" or "arbitrum".');
+    console.log('\n📡 Select network:');
+    console.log('1. Ethereum');
+    console.log('2. Arbitrum');
+    const networkChoice = await question('Your choice (1-2): ');
+
+    if (!['1', '2'].includes(networkChoice)) {
+      throw new Error('Invalid network selection. Please choose 1 or 2.');
     }
-    
-    const networkConfig = NETWORK_CONFIGS[networkChoice.toLowerCase()];
+
+    const networkConfig = networkChoice === '1'
+      ? NETWORK_CONFIGS.ethereum
+      : NETWORK_CONFIGS.arbitrum;
     console.log(`Selected network: ${networkConfig.name}`);
     
     // Set up provider
@@ -953,9 +866,10 @@ async function main() {
         '2. Revoke all inheritances\n' +
         '3. Check-in\n' +
         '4. Remove verifier\n' +
-        '5. Refund remaining ETH to gas wallet\n' +
-        '6. Exit\n' +
-        'Choose an action (1-6): ' 
+        '5. Fund testator wallet\n' +
+        '6. Refund remaining ETH to gas wallet\n' +
+        '7. Exit\n' +
+        'Choose an action (1-7): '
       );
       
       switch (action) {
@@ -980,18 +894,23 @@ async function main() {
           break;
           
         case '5':
-          // Refund remaining ETH
-          await refundRemainingEth(testatorKeys, gasWallet.address, provider);
+          // Fund testator wallet
+          await walletUtils.fundWallet(testatorKeys, signer, provider, "Testator", question);
           break;
-          
+
         case '6':
+          // Refund remaining ETH
+          await walletUtils.refundWallet(testatorKeys, gasWallet.address, provider, "Testator", question);
+          break;
+
+        case '7':
           // Exit
           console.log('Exiting...');
           running = false;
           break;
-          
+
         default:
-          console.log('Invalid choice. Please select 1-6.');  // Update the range
+          console.log('Invalid choice. Please select 1-7.');
       }
     }
   } catch (error) {
