@@ -2,33 +2,51 @@
 
 ## About Inheritor
 
-Inheritor is a blockchain-based solution for creating digital wills that securely transfer digital assets to designated beneficiaries upon the testator's incapacitation or death. This repository contains the emergency management tools designed to serve as failsafe mechanisms, ensuring that digital inheritances remain accessible even without the Inheritor mobile application.
+Inheritor is an open, on‑chain system for **digital inheritance**. It secures assets whose access *is* ownership (wallet keys, secrets, instructions, media) and releases them to the rightful beneficiary only when the smart contract says so.
+
+This repository hosts the **public‑domain reference tools** that guarantee liveness and auditability even if the mobile app is unavailable:
+
+- A **Beneficiary Claim** script and utilities that decrypt assets once the contract state is *Claimable*
+- A **Check/Monitor** script for beneficiaries
+- A **Testator emergency** script to manage wills when needed
+
+These tools exercise the project’s core architecture:
+
+- **Architectural time‑lock** — The app or script verifies on‑chain policy (Active → Claimable → Claimed) before decryption; security does not rely on code secrecy.
+- **Dual‑recipient encryption** — Every asset is encrypted for two recipients: an iOS X‑Wing path (infrastructure‑independent, non‑exportable keys) and an external ML‑KEM path (portable tools; conditional key release).
+- **Open format, public domain** — The envelope format and reference clients are open so anyone can inspect, audit, and build interoperable clients.
+
+**Who this repo is for**
+
+- Developers and auditors who want a transparent, runnable demonstration of the protocol
+- Beneficiaries and testators who need a fallback path when the Inheritor app is unavailable
+- Integrators who plan to build compatible clients or services on top of the open format
 
 ## Repository Contents
 
 ```
 UserRecovery/
-├── Inheritor - WhitePaper.md
 ├── Manuals/
 │   ├── CheckClaimable.md
 │   ├── ClaimManual.md
 │   └── TestatorManual.md
 ├── keys/                          # Directory for exported key files
+│   └── InheritorKeys_2025-09-28.json
+├── scripts/
+│   ├── utils/
+│   │   └── shared-utils.js        # Centralized utilities
+│   ├── Beneficiary_Claim.js
+│   └── Testator.js
 ├── .env                           # Environment variables (git ignored)
 ├── .env.example                   # Environment variables template
+├── .gitignore
 ├── README.md
-├── mitigation.md
 ├── package-lock.json
 ├── package.json
-└── scripts/
-    ├── utils/
-    │   └── shared-utils.js        # Centralized utilities
-    ├── Beneficiary_CheckClaimable.js
-    ├── Beneficiary_Claim.js
-    └── Testator.js
+└── white-paper.pdf
 ```
 
-## Emergency Tool Suite
+## Tool Suite
 
 This repository provides three essential command-line tools for managing digital inheritances in emergency situations:
 
@@ -56,14 +74,6 @@ For beneficiaries to claim and decrypt their inherited digital assets:
 - Fetch and decrypt the symmetric key
 - Download and decrypt the inherited digital asset
 - Save the decrypted file to your local system
-
-## Key Features
-
-- **Self-Sovereign Solution**: No dependence on Inheritor's infrastructure or the mobile app
-- **Blockchain-Based**: Leverages the security and immutability of Ethereum and Arbitrum blockchains
-- **Cryptographically Secure**: Uses robust encryption to protect sensitive digital assets
-- **Permanently Stored**: Digital assets are stored on Arweave's permanent storage network
-- **User-Controlled**: Complete control over your digital inheritance process
 
 ## Getting Started
 
@@ -93,101 +103,12 @@ These tools provide direct access to your blockchain assets and sensitive crypto
 - Move any claimed assets to secure storage immediately
 - Delete exported key files after use or store them in secure, encrypted storage
 
-## Technical Overview
-
-Inheritor uses a combination of technologies to provide secure digital inheritance:
-
-- **Ethereum/Arbitrum**: Smart contracts that define and enforce inheritance conditions
-- **Arweave**: Permanent, decentralized storage for encrypted digital assets
-- **Public-key Cryptography**: ECDH key exchange and HKDF for secure key derivation
-- **Symmetric Encryption**: AES-GCM for asset encryption and decryption
-
-The system creates a cryptographically secure time-lock mechanism where assets can only be accessed by beneficiaries when specific conditions (like testator inactivity) are met.
-
-## Technical Implementation: Shared Utilities & Performance Optimizations
-
-### Architecture Overview
-
-The emergency management tools have been refactored to improve performance, reliability, and maintainability through the implementation of shared utilities and optimized blockchain interaction patterns.
 
 #### Shared Utilities Module
 
 Location: `/scripts/utils/shared-utils.js`
 
 This centralized module provides common functionality across all emergency management scripts:
-
-**Key Components:**
-1. **Network & Contract Constants** - Ethereum and Arbitrum chain IDs, proxy contract addresses, network configurations
-2. **Contract ABIs** - Comprehensive Inheritor contract ABI including `exportContractForMigration()` for batch data retrieval
-3. **Utility Functions** - Formatting, contract utilities, network setup, key management, wallet operations, and error handling
-
-#### Performance Optimizations
-
-**Batch Data Retrieval:**
-- **Before**: Multiple individual calls (N+1 blockchain calls)
-- **After**: Single batch call using `exportContractForMigration()` (2 blockchain calls)
-- **Result**: 50-90% reduction in blockchain queries, faster data loading, lower RPC rate limiting exposure
-
-**Deployment Block Optimization:**
-- Automatically detects contract deployment block by finding earliest event
-- Caches deployment blocks to avoid repeated lookups
-- Uses optimized block range for event queries instead of scanning from block 0
-
-**Caching Mechanisms:**
-- Global deployment block cache prevents repeated blockchain queries
-- Improves performance for repeated operations
-- Reduces blockchain network load
-
-#### Code Quality Improvements
-
-**Centralized Configuration:**
-All constants and configurations are centralized in `shared-utils.js` including network configurations, gas estimation constants, inheritance state mappings, and error handling.
-
-**Modular Architecture:**
-Each utility category is separated into focused modules:
-- `formatters` - Display formatting functions
-- `contractUtils` - Blockchain interaction utilities
-- `networkUtils` - Network setup and configuration
-- `keyUtils` - Cryptographic key management
-- `walletUtils` - Wallet operations and funding
-
-#### Scripts Refactored
-
-**Testator.js ✅ Complete**
-- `viewDigitalWill()`: Batch inheritance data retrieval
-- `revokeAllInheritances()`: Optimized inheritance state checking
-- Event queries use deployment block optimization
-
-**Beneficiary_CheckClaimable.js ✅ Complete**
-- `displayBeneficiaryInheritances()`: Batch data retrieval with `exportContractForMigration()`
-- Enhanced error handling with graceful fallbacks
-- Shared utility integration for consistency
-
-**Beneficiary_Claim.js ⏳ Future Enhancement**
-- Not yet refactored - operates independently
-- Can be enhanced with shared utilities in future iterations
-
-#### File Structure Update
-
-```
-UserRecovery/
-├── scripts/
-│   ├── utils/
-│   │   └── shared-utils.js          # Centralized utilities
-│   ├── Testator.js                  # Optimized testator tool
-│   ├── Beneficiary_CheckClaimable.js # Optimized beneficiary check tool
-│   └── Beneficiary_Claim.js         # Original claim tool
-├── Manuals/                         # User-facing documentation
-└── keys/                           # User key files (unchanged)
-```
-
-#### Backward Compatibility
-
-The refactored scripts maintain full compatibility with:
-- Existing key file formats
-- Environment variable configurations
-- Command-line interfaces
-- All original functionality
 
 ## Installation
 
@@ -217,13 +138,22 @@ The refactored scripts maintain full compatibility with:
 
 This project is released into the public domain. See [LICENSE](LICENSE) for more details.
 
-## Contributing
+## Open Source & Community
 
-Contributions to improve these emergency tools are welcome. Please feel free to submit issues or pull requests.
+
+The Inheritor project and its reference clients—including the CLI tools and a future iOS reference app—are released into the public domain to guarantee liveness and auditability for all users. By making the full technology stack open, anyone is empowered to study, copy, or fork these tools and formats.
+
+Note: The smart contract itself is on-chain and auditable but not released into the public domain. The method that creates new inheritances requires a signature from the official Inheritor app. This ensures that the ability to originate inheritances remains a commercial feature of the main application. Community developers are free to build clients that read, verify, and claim inheritances, but creating inheritances is reserved for the official app.
+
+However, the official Inheritor team remains the reference implementation and steward of the open dual-recipient encryption format. This ensures a single interoperable standard while welcoming community innovation.
+
+Security in Inheritor does not depend on secrecy—openness enables trust and allows anyone to audit the code and cryptography. We believe robust security comes from transparency and public review, not obscurity.
+
+We encourage contributions, interoperability, and adoption of the dual-recipient encryption format as an open standard for digital inheritance and beyond. Community participation is welcome to improve, extend, or integrate these tools and formats into other projects.
 
 ## Contact
 
-For support or questions, contact: [support@inheritor.app](mailto:support@inheritor.app)
+For support or questions, contact: [support@inheritor.app](mailto:info@inheritor.app)
 
 ---
 

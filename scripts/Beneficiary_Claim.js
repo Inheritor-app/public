@@ -17,6 +17,12 @@
  * - AES-256-GCM: Authenticated encryption for asset data
  * - HKDF-SHA256: Key derivation for symmetric key wrapping
  *
+ * Base64 Encoding Standards:
+ * - IMPORTANT: Always use standard base64 encoding for all cryptographic operations
+ * - Use toString('base64') and Buffer.from(..., 'base64') for crypto data
+ * - Only use toString('base64url') for Arweave transaction IDs and data paths
+ * - This ensures cross-platform compatibility with Swift implementations
+ *
  * Usage: node Claim.js
  */
 
@@ -159,7 +165,7 @@ async function retrieveEncryptedSymmetricKey(inheritanceId, network, beneficiary
             throw new Error('No symmetric key returned from CloudFlare');
         }
 
-        return Buffer.from(response.data.encryptedSymmetricKey, 'base64');
+        return fromB64(response.data.encryptedSymmetricKey);
     } catch (error) {
         if (error.response && error.response.status === 404) {
             throw new Error(`Encrypted symmetric key not found in CloudFlare. This could mean:
@@ -227,24 +233,44 @@ async function retrieveAssetFromArweave(transactionId) {
             throw new Error('Missing required fields in dual-recipient data');
         }
 
+        // Validate envelope version
+        if (arweaveData.version && arweaveData.version !== 1) {
+            throw new Error(`Unsupported encryption version: ${arweaveData.version}`);
+        }
+
+        // Validate recipient version (recV)
+        if (externalRecipient.recV && externalRecipient.recV !== 1) {
+            throw new Error(`Unsupported recipient version: ${externalRecipient.recV}`);
+        }
+
         return {
-            encapsulatedKey: Buffer.from(externalRecipient.kem_ct, 'base64'),
-            encryptedData: Buffer.from(arweaveData.ciphertext, 'base64'),
-            nonce: Buffer.from(arweaveData.nonce, 'base64'),
-            tag: Buffer.from(arweaveData.tag, 'base64'),
+            encapsulatedKey: fromB64(externalRecipient.kem_ct),
+            encryptedData: fromB64(arweaveData.ciphertext),
+            nonce: fromB64(arweaveData.nonce),
+            tag: fromB64(arweaveData.tag),
             fileType: arweaveData.fileType || 'bin',
             algorithm: arweaveData.algorithm || 'AES-256-GCM',
+            version: arweaveData.version || 1, // Include version for AAD
+            recipients: arweaveData.recipients || [], // Include recipients for count
             externalRecipient: {
+                recV: externalRecipient.recV || 1, // Recipient version with fallback
                 kid: externalRecipient.kid, // Include the actual kid for HKDF
-                salt: Buffer.from(externalRecipient.salt, 'base64'),
-                wrapNonce: Buffer.from(externalRecipient.wrap_nonce, 'base64'),
-                wrappedKey: Buffer.from(externalRecipient.wrappedK, 'base64')
+                salt: fromB64(externalRecipient.salt),
+                wrappedKey: fromB64(externalRecipient.wrappedK)
             }
         };
     } catch (error) {
         throw errorHandlers.handleContractError(error, 'Arweave retrieval');
     }
 }
+
+// =============================================================================
+// Base64 helpers (standard Base64 only; no URL-safe here)
+// =============================================================================
+
+// Crypto uses standard Base64 with padding. Base64URL is reserved for Arweave IDs/paths only.
+const b64 = (buf) => Buffer.from(buf).toString('base64');
+const fromB64 = (s) => Buffer.from(s, 'base64');
 
 // =============================================================================
 // ML-KEM-768 Quantum-Safe Decryption
@@ -263,7 +289,7 @@ function decryptSymmetricKeyDualRecipient(wrappedKey, encapsulatedKey, externalR
 
     try {
         // 1. Import ML-KEM-768 private key from base64
-        const privateKey = Buffer.from(quantumPrivateKey, 'base64');
+        const privateKey = fromB64(quantumPrivateKey);
 
         // 2. Decapsulate using ML-KEM-768 to get shared secret
         const sharedSecret = ml_kem768.decapsulate(encapsulatedKey, privateKey);
@@ -273,13 +299,17 @@ function decryptSymmetricKeyDualRecipient(wrappedKey, encapsulatedKey, externalR
         const encryptionKey = hkdf(Buffer.from(sharedSecret), externalRecipient.salt, info, 32);
 
         // 4. Decrypt wrapped key using AES-GCM
-        // CloudFlare stores wrapped keys in format: nonce (12 bytes) + ciphertext + tag (16 bytes)
-        const nonce = Buffer.from(wrappedKey.subarray(0, 12));
+        // Extract nonce from combined data (first 12 bytes)
+        const nonce = wrappedKey.subarray(0, 12);
         const tag = Buffer.from(wrappedKey.subarray(-16));
         const ciphertext = Buffer.from(wrappedKey.subarray(12, -16));
 
-        // Set up Additional Authenticated Data (AAD) as used during encryption
-        const aad = Buffer.from(`v=1|kid=${externalRecipient.kid}|type=mlkem768|purpose=wrap`, 'utf8');
+        // Set up Additional Authenticated Data (AAD)
+        // IMPORTANT: Use standard base64 (not URL-safe) for cross-platform compatibility
+        const kemHash = require('crypto').createHash('sha256').update(encapsulatedKey).digest();
+        const kemHashB64 = b64(kemHash);
+        const wrapNonceB64 = b64(nonce);
+        const aad = Buffer.from(`recV=${externalRecipient.recV}|kid=${externalRecipient.kid}|type=mlkem768|kem_hash=${kemHashB64}|nonce=${wrapNonceB64}`, 'utf8');
 
         const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, nonce);
         decipher.setAuthTag(tag);
@@ -385,7 +415,9 @@ async function claimInheritance(contract, inheritanceId, networkName, keys) {
         // 5. Decrypt the asset using AES-256-GCM with dual-recipient AAD
         console.log('Decrypting asset data...');
 
-        const payloadAAD = Buffer.from('v=1|alg=AES-256-GCM|recipients=2', 'utf8');
+        const version = arweaveData.version;
+        const recipientCount = arweaveData.recipients.length;
+        const payloadAAD = Buffer.from(`v=${version}|alg=AES-256-GCM|recipients=${recipientCount}`, 'utf8');
 
         const decipher = crypto.createDecipheriv('aes-256-gcm', symmetricKey, arweaveData.nonce);
         decipher.setAuthTag(arweaveData.tag);
@@ -500,8 +532,19 @@ async function main() {
 // Module Exports & Execution
 // =============================================================================
 
+// Test base64 symmetry on startup (simple verification)
+function testB64Symmetry() {
+    const testData = Buffer.from([0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD]);
+    const roundTrip = fromB64(b64(testData));
+    if (!testData.equals(roundTrip)) {
+        throw new Error('Base64 symmetry test failed');
+    }
+    console.log('✅ Base64 symmetry test passed');
+}
+
 // Run if executed directly
 if (require.main === module) {
+    testB64Symmetry();
     main();
 }
 
@@ -512,5 +555,8 @@ module.exports = {
     retrieveAssetFromArweave,
     retrieveEncryptedSymmetricKey,
     generateAppSignature,
-    hkdf
+    hkdf,
+    b64,
+    fromB64,
+    testB64Symmetry
 };
