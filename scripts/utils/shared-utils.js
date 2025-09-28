@@ -22,7 +22,7 @@ const path = require('path');
 const NETWORK_CONSTANTS = {
     ETHEREUM_CHAIN_ID: 1,
     ARBITRUM_CHAIN_ID: 42161,
-    PROXY_CONTRACT_ADDRESS: '0x8743E613486Df310cC549cd57860c28c8438892E', // Only on Ethereum, V2.1.0 (test): MAKE SURE TO UPDATE TO PROD ADDRESS WHEN PUSHING TO PUBLIC GIT
+    PROXY_CONTRACT_ADDRESS: '0xe33AB05Eef0d1803ca564C9a1DFaC6797853D3d2', // Ethereum, V2.1.0 (production): 
     ZERO_ADDRESS: '0x0000000000000000000000000000000000000000'
 };
 
@@ -917,7 +917,7 @@ const walletUtils = {
 
             console.log('\n✅ Transfer completed!');
             console.log(`New ${walletRole.toLowerCase()} wallet balance: ${ethers.formatEther(newTargetBalance)} ETH`);
-            console.log(`New gas wallet balance: ${ethers.formatEther(newGasBalance)} ETH`);
+            console.log(`Remaining gas wallet balance: ${ethers.formatEther(newGasBalance)} ETH`);
 
         } catch (error) {
             console.error(`❌ Transfer failed: ${error.message}`);
@@ -1004,7 +1004,7 @@ const walletUtils = {
 
             console.log(`\n✅ Refund complete!`);
             console.log(`New ${walletRole.toLowerCase()} wallet balance: ${ethers.formatEther(newSourceBalance)} ETH`);
-            console.log(`New gas wallet balance: ${ethers.formatEther(newGasBalance)} ETH`);
+            console.log(`Updated gas wallet balance: ${ethers.formatEther(newGasBalance)} ETH`);
 
         } catch (error) {
             console.error(`\n❌ ERROR during refund: ${error.message}`);

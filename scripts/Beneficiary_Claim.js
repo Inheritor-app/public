@@ -53,7 +53,7 @@ const {
 // Constants
 // =============================================================================
 
-const CLOUDFLARE_WORKER_URL = 'https://keyprovider-test.inheritor.workers.dev';
+const CLOUDFLARE_WORKER_URL = 'https://keyprovider-prod.inheritor.workers.dev';
 
 // Create readline interface
 const rl = readline.createInterface({

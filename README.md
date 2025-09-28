@@ -35,6 +35,7 @@ UserRecovery/
 ├── scripts/
 │   ├── utils/
 │   │   └── shared-utils.js        # Centralized utilities
+│   ├── Beneficiary_CheckClaimable.js
 │   ├── Beneficiary_Claim.js
 │   └── Testator.js
 ├── .env                           # Environment variables (git ignored)
