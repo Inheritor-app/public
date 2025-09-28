@@ -249,7 +249,7 @@ async function retrieveAssetFromArweave(transactionId) {
             nonce: fromB64(arweaveData.nonce),
             tag: fromB64(arweaveData.tag),
             fileType: arweaveData.fileType || 'bin',
-            algorithm: arweaveData.algorithm || 'AES-256-GCM',
+            algorithm: arweaveData.algorithm || 'X-Wing/ML-KEM-768 + AES-256-GCM',
             version: arweaveData.version || 1, // Include version for AAD
             recipients: arweaveData.recipients || [], // Include recipients for count
             externalRecipient: {

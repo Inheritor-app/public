@@ -44,7 +44,7 @@ UserRecovery/
 ├── README.md
 ├── package-lock.json
 ├── package.json
-└── white-paper.pdf
+└── white-paper.html
 ```
 
 ## Tool Suite
