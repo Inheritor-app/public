@@ -1,4 +1,4 @@
-# Inheritor Emergency Management Tool
+# Inheritor CLI Management Tool
 ## User Manual
 
 ## Table of Contents
@@ -14,7 +14,7 @@
 
 ## Introduction
 
-The Inheritor Emergency Management Tool is designed as a failsafe mechanism that provides testators direct control over their digital inheritance smart contracts. This tool should only be used in emergency situations when normal access methods are unavailable, or when you need to perform critical operations directly.
+The Inheritor CLI Management Tool is designed as a failsafe mechanism that provides testators direct control over their digital inheritance smart contracts. This tool should be used when normal access methods are unavailable, or when you need to perform critical operations directly.
 
 The tool works with the quantum-safe Inheritor system that uses advanced post-quantum cryptography (ML-KEM-768) to ensure your inheritances remain secure against future quantum computing threats. While this tool focuses on management and administrative functions, it operates within the quantum-safe architecture framework.
 
@@ -25,7 +25,7 @@ With this tool, you can:
 - Remove verifiers from your Digital Will
 - Return unused ETH to your gas wallet
 
-This tool provides a command-line interface for emergency management of your quantum-safe digital inheritances without requiring the full mobile application.
+This tool provides a command-line interface for management of your quantum-safe digital inheritances without requiring the full mobile application.
 
 ## Before You Begin
 
@@ -128,13 +128,14 @@ node scripts/Testator.js
    2. Revoke all inheritances
    3. Check-in
    4. Remove verifier
-   5. Refund remaining ETH to gas wallet
-   6. Exit
+   5. Fund testator wallet
+   6. Refund remaining ETH to gas wallet
+   7. Exit
    ```
 
 ### User Interface Tips
 
-- **Menu Selection**: Enter only the number (1-6) of your chosen option
+- **Menu Selection**: Enter only the number (1-7) of your chosen option
 - **Yes/No Questions**: Always type the full word `yes` or `no` when prompted
 - **Waiting for Transactions**: When sending transactions, be patient while waiting for confirmations
 - **Returning to Menu**: After completing an action, press Enter to return to the main menu
@@ -235,7 +236,30 @@ This function removes the verifier requirement from your Digital Will.
   - To remove additional safeguards (use with caution)
   - When verification is causing problems with legitimate inheritance transfers
 
-### 5. Refund Remaining ETH
+### 5. Fund Testator Wallet
+
+This function transfers ETH from your gas wallet to the testator wallet.
+
+- **Process**:
+  - Displays current balances of both wallets
+  - Prompts you for the amount of ETH to transfer
+  - Confirms your intention (requires typing "yes")
+  - Sends transaction from gas wallet to testator wallet
+  - Displays updated balances after transfer
+
+- **Important Notes**:
+  - Requires sufficient ETH in your gas wallet
+  - Useful for pre-funding the testator wallet before performing operations
+  - Gives you manual control over funding amounts
+  - Transfer amount must be greater than zero
+
+- **When to Use**:
+  - When you need to manually fund the testator wallet
+  - Before performing multiple operations to avoid repeated funding prompts
+  - To ensure sufficient funds are available for gas-intensive operations
+  - As an alternative to automatic funding during operations
+
+### 6. Refund Remaining ETH
 
 This function returns unused ETH from the testator wallet to your gas wallet.
 
@@ -255,7 +279,7 @@ This function returns unused ETH from the testator wallet to your gas wallet.
   - When you want to consolidate funds back to your main wallet
   - To avoid leaving small amounts of ETH in the testator wallet
 
-### 6. Exit
+### 7. Exit
 
 Safely exits the application.
 
@@ -363,14 +387,14 @@ If you encounter persistent errors not covered above, please:
 - **Network Security**: Prefer a trusted network connection
 - **Protect Your Mnemonic**: Never share your recovery phrase
 - **Private Key Safety**: Your gas wallet private key is sensitive information
-- **Temporary Use**: This is an emergency tool, not for regular use
+- **Alternative Access**: This is a CLI tool for direct access when the mobile app is unavailable
 - **Verify Transactions**: Check transaction details before confirming
 
 ## Related Tools
 
-The Inheritor Emergency Tools suite includes three complementary command-line applications:
+The Inheritor CLI Tools suite includes three complementary command-line applications:
 
-1. **Testator Emergency Management Tool** (this tool): For testators to manage their Digital Will
+1. **Testator CLI Management Tool** (this tool): For testators to manage their Digital Will
 2. **Beneficiary Check Tool**: For beneficiaries to monitor and check claimability of inheritances
 3. **Beneficiary Claim Tool**: For beneficiaries to claim and decrypt inherited digital assets
 
@@ -378,4 +402,4 @@ Each tool serves a specific purpose in the inheritance lifecycle. If you are bot
 
 ---
 
-**Disclaimer**: This tool is provided for emergency use only. While efforts have been made to ensure its security and accuracy, use it at your own risk. Always verify the effects of any blockchain transactions, as they cannot be reversed once confirmed.
+**Disclaimer**: This tool is provided as-is. While efforts have been made to ensure its security and accuracy, use it at your own risk. Always verify the effects of any blockchain transactions, as they cannot be reversed once confirmed.

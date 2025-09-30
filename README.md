@@ -2,13 +2,13 @@
 
 ## About Inheritor
 
-Inheritor is an open, on‑chain system for **digital inheritance**. It secures assets whose access *is* ownership (wallet keys, secrets, instructions, media) and releases them to the rightful beneficiary only when the smart contract says so.
+A smarter, safer way to ensure your wishes are honored when the time come
 
 This repository hosts the **public‑domain reference tools** that guarantee liveness and auditability even if the mobile app is unavailable:
 
 - A **Beneficiary Claim** script and utilities that decrypt assets once the contract state is *Claimable*
 - A **Check/Monitor** script for beneficiaries
-- A **Testator emergency** script to manage wills when needed
+- A **Testator CLI** script to manage wills when needed
 
 These tools exercise the project’s core architecture:
 
@@ -31,14 +31,12 @@ UserRecovery/
 │   ├── ClaimManual.md
 │   └── TestatorManual.md
 ├── keys/                          # Directory for exported key files
-│   └── InheritorKeys_2025-09-28.json
 ├── scripts/
 │   ├── utils/
 │   │   └── shared-utils.js        # Centralized utilities
 │   ├── Beneficiary_CheckClaimable.js
 │   ├── Beneficiary_Claim.js
 │   └── Testator.js
-├── .env                           # Environment variables (git ignored)
 ├── .env.example                   # Environment variables template
 ├── .gitignore
 ├── README.md
@@ -48,9 +46,9 @@ UserRecovery/
 
 ## Tool Suite
 
-This repository provides three essential command-line tools for managing digital inheritances in emergency situations:
+This repository provides three essential command-line tools for managing digital inheritances:
 
-### 1. Testator Emergency Management Tool (`scripts/Testator.js`)
+### 1. Testator CLI Management Tool (`scripts/Testator.js`)
 
 For testators (will creators) to manage their Digital Will when the Inheritor app is unavailable:
 - View the status of all inheritances in your Digital Will
@@ -98,7 +96,7 @@ These tools provide direct access to your blockchain assets and sensitive crypto
 - Run these tools only on secure, trusted devices
 - Never share your exported key files, recovery mnemonics, or private keys
 - Secure your `.env` file and exported key files - they contain sensitive private keys for both testator and beneficiary
-- Use these tools only in genuine emergency situations when the Inheritor app is unavailable
+- Use these tools when the Inheritor app is unavailable or for direct command-line access
 - Verify all transaction details before confirming
 - Move any claimed assets to secure storage immediately
 - Delete exported key files after use or store them in secure, encrypted storage
@@ -108,7 +106,7 @@ These tools provide direct access to your blockchain assets and sensitive crypto
 
 Location: `/scripts/utils/shared-utils.js`
 
-This centralized module provides common functionality across all emergency management scripts:
+This centralized module provides common functionality across all CLI management scripts:
 
 ## Installation
 
@@ -157,7 +155,7 @@ For support or questions, contact: [support@inheritor.app](mailto:info@inheritor
 
 ---
 
-**Disclaimer**: These tools are provided for emergency use only. While efforts have been made to ensure their security and accuracy, use them at your own risk. Always verify the effects of any blockchain transactions, as they cannot be reversed once confirmed.
+**Disclaimer**: These tools are provided as-is. While efforts have been made to ensure their security and accuracy, use them at your own risk. Always verify the effects of any blockchain transactions, as they cannot be reversed once confirmed.
 
 ## Acknowledgments
 

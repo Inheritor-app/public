@@ -124,13 +124,14 @@ node scripts/Beneficiary_CheckClaimable.js
    === Main Menu ===
    1. Show received Inheritances
    2. Check if inheritance is claimable
-   3. Refund remaining ETH to gas wallet
-   4. Exit
+   3. Fund beneficiary wallet
+   4. Refund remaining ETH to gas wallet
+   5. Exit
    ```
 
 ### User Interface Tips
 
-- **Menu Selection**: Enter only the number (1-4) of your chosen option
+- **Menu Selection**: Enter only the number (1-5) of your chosen option
 - **Inheritance IDs**: Always enter full inheritance IDs with the 0x prefix
 - **Yes/No Questions**: Always type the full word `yes` or `no` when prompted
 - **Waiting for Transactions**: When sending transactions, be patient while waiting for confirmations
@@ -166,4 +167,161 @@ This function verifies if a specific inheritance is claimable and may update its
 - **Process**:
   - Retrieves detailed information about the inheritance
   - Verifies you are the intended beneficiary
-  - If needed, transfers ETH from
+  - Checks beneficiary wallet balance for gas
+  - Calls the `isClaimable` contract function
+  - Updates and displays the new inheritance state
+
+- **Important Notes**:
+  - Requires the full 64-character inheritance ID (with 0x prefix)
+  - May trigger a state change on the blockchain if conditions are met
+  - Requires sufficient ETH in your beneficiary wallet for gas
+  - Will warn you if you're not the designated beneficiary
+  - Shows possible reasons if inheritance is not yet claimable
+
+- **When to Use**:
+  - To verify when an inheritance becomes available for claiming
+  - After a testator has missed their check-in deadline
+  - To trigger the state transition from Designated to Claimable
+  - Before attempting to use the Claim Tool
+
+### 3. Fund Beneficiary Wallet
+
+This function transfers ETH from your gas wallet to the beneficiary wallet.
+
+- **Process**:
+  - Displays current balances of both wallets
+  - Prompts you for the amount of ETH to transfer
+  - Confirms your intention (requires typing "yes")
+  - Sends transaction from gas wallet to beneficiary wallet
+  - Displays updated balances after transfer
+
+- **Important Notes**:
+  - Requires sufficient ETH in your gas wallet
+  - Useful for pre-funding the beneficiary wallet before checking claimability
+  - Gives you manual control over funding amounts
+  - Transfer amount must be greater than zero
+
+- **When to Use**:
+  - When you need to manually fund the beneficiary wallet
+  - Before checking claimability to avoid insufficient funds errors
+  - To ensure sufficient funds are available for gas-intensive operations
+  - As preparation before claiming inheritances
+
+### 4. Refund Remaining ETH
+
+This function returns unused ETH from the beneficiary wallet to your gas wallet.
+
+- **Process**:
+  - Checks the beneficiary wallet's ETH balance
+  - Confirms your intention (requires typing "yes")
+  - Calculates maximum amount that can be safely refunded
+  - Sends transaction to return funds to gas wallet
+
+- **Important Notes**:
+  - Small amounts (< 0.001 ETH) cannot be refunded reliably
+  - Some ETH is kept to cover the transaction fee
+  - Will display both wallets' balances before and after
+
+- **When to Use**:
+  - After checking inheritances to recover unused ETH
+  - When you want to consolidate funds back to your main wallet
+  - To avoid leaving small amounts of ETH in the beneficiary wallet
+
+### 5. Exit
+
+Safely exits the application.
+
+## Technical Background
+
+### Understanding Key Terms
+
+#### Inheritance ID
+- A unique 32-byte identifier for each inheritance (shown as 0x followed by 64 hexadecimal characters)
+- Used to reference specific inheritances when checking or claiming
+- Can be obtained from the "Show received Inheritances" function
+
+#### Beneficiary EOA (Externally Owned Account)
+- Your Ethereum address derived from your exported keys
+- The address designated to receive the inheritance
+- Used to identify which inheritances belong to you
+
+#### Claimable State
+- An inheritance state indicating it can be claimed by the beneficiary
+- Triggered when testator fails to check-in within the required timeframe
+- May also require verifier approval depending on the Digital Will configuration
+
+### Inheritance States
+
+The tool displays inheritance states with the following meanings:
+
+- **Designated** (Green): Inheritance is set up but not yet claimable
+- **Claimable** (Yellow/Orange): Inheritance can now be claimed
+- **Claimed** (Blue): Inheritance has already been claimed
+- **Revoked** (Red): Testator cancelled this inheritance
+- **Purged** (Gray): Inheritance removed from the system
+
+### Why Check Claimability?
+
+The `isClaimable` function serves two purposes:
+1. **Query**: Checks if an inheritance is ready to be claimed
+2. **State Update**: If conditions are met, transitions the inheritance to Claimable state
+
+This is necessary before using the Claim Tool, as inheritances must be in the Claimable state to be claimed.
+
+## Troubleshooting
+
+### Common Errors and Solutions
+
+#### "Invalid Inheritance ID format"
+- **Cause**: Inheritance ID format is incorrect
+- **Solution**: Ensure the ID starts with 0x and is exactly 66 characters long (0x + 64 hex characters)
+
+#### "You are not the beneficiary of this inheritance"
+- **Cause**: The inheritance is designated to a different address
+- **Solution**: Verify you're using the correct exported key file, or this inheritance is not meant for you
+
+#### "Insufficient funds for transaction"
+- **Cause**: Beneficiary wallet doesn't have enough ETH for gas
+- **Solution**: Use menu option 3 to fund your beneficiary wallet, then try again
+
+#### "This inheritance is NOT YET CLAIMABLE"
+- **Cause**: Conditions for claiming haven't been met yet
+- **Solution**: Wait for the testator's check-in deadline to pass, or check if verification is required
+
+#### "Connection failed"
+- **Cause**: RPC provider is unavailable or rate-limited
+- **Solution**: Try option 2 to use public endpoints, or use your own Infura/Alchemy key
+
+#### "No inheritances found for this beneficiary"
+- **Cause**: No inheritances are designated to your beneficiary address
+- **Solution**: Verify you're connected to the correct network and using the correct keys
+
+### When to Seek Help
+
+If you encounter persistent errors not covered above, please:
+1. Take note of the exact error message
+2. Do not share your private keys with anyone
+3. Contact official support channels
+
+## Security Considerations
+
+- **Use on a Secure Device**: Run the tool on a private, secure computer
+- **Network Security**: Prefer a trusted network connection
+- **Protect Your Keys**: Never share your exported key file or private keys
+- **Verify Inheritance IDs**: Double-check inheritance IDs before submitting transactions
+- **Understand State Changes**: The isClaimable function can modify blockchain state
+- **Gas Costs**: Be aware that checking claimability requires a blockchain transaction
+
+## Related Tools
+
+The Inheritor CLI Tools suite includes three complementary command-line applications:
+
+1. **Testator CLI Management Tool**: For testators to manage their Digital Will
+2. **Beneficiary Check Tool** (this tool): For beneficiaries to monitor and check claimability of inheritances
+3. **Beneficiary Claim Tool**: For beneficiaries to claim and decrypt inherited digital assets
+
+Each tool serves a specific purpose in the inheritance lifecycle. Use this Check Tool to monitor inheritance status, then use the Claim Tool when inheritances become claimable.
+
+---
+
+**Disclaimer**: This tool is provided as-is for checking inheritance status. While efforts have been made to ensure its security and accuracy, use it at your own risk. Always verify the effects of any blockchain transactions, as they cannot be reversed once confirmed.

@@ -92,7 +92,7 @@ This should display the Node.js version (should be 16.0.0 or higher)
 To start the tool, run:
 
 ```bash
-node Beneficiary_Claim.js
+node scripts/Beneficiary_Claim.js
 ```
 
 ### Initial Setup Process
@@ -339,9 +339,9 @@ If you encounter persistent errors not covered above, please:
 
 ## Related Tools
 
-The Inheritor Emergency Tools suite includes three complementary command-line applications:
+The Inheritor CLI Tools suite includes three complementary command-line applications:
 
-1. **Testator Emergency Management Tool**: For testators to manage their Digital Will
+1. **Testator CLI Management Tool**: For testators to manage their Digital Will
 2. **Beneficiary Check Tool**: For beneficiaries to monitor and check claimability of inheritances
 3. **Beneficiary Claim Tool** (this tool): For beneficiaries to claim and decrypt inherited digital assets
 
