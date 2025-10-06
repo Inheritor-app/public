@@ -4,6 +4,8 @@
 
 A smarter, safer way to ensure your wishes are honored when the time come
 
+**[Read the Whitepaper](WhitePaper.html)** for a comprehensive technical overview.
+
 This repository hosts the **public‑domain reference tools** that guarantee liveness and auditability even if the mobile app is unavailable:
 
 - A **Beneficiary Claim** script and utilities that decrypt assets once the contract state is *Claimable*
@@ -40,6 +42,7 @@ UserRecovery/
 ├── .env.example                   # Environment variables template
 ├── .gitignore
 ├── README.md
+|__ WhitePaper.html                # Project White Paper
 ├── package-lock.json
 ├── package.json
 ```
