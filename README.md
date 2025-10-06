@@ -4,7 +4,7 @@
 
 A smarter, safer way to ensure your wishes are honored when the time come
 
-**[Read the Whitepaper](WhitePaper.html)** for a comprehensive technical overview.
+**[Read the Whitepaper](WhitePaper.md)** for a comprehensive technical overview.
 
 This repository hosts the **public‑domain reference tools** that guarantee liveness and auditability even if the mobile app is unavailable:
 
