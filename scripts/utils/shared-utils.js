@@ -23,7 +23,8 @@ const NETWORK_CONSTANTS = {
     ETHEREUM_CHAIN_ID: 1,
     ARBITRUM_CHAIN_ID: 42161,
     PROXY_CONTRACT_ADDRESS: '0xe33AB05Eef0d1803ca564C9a1DFaC6797853D3d2', // Ethereum, V2.1.0 (production)
-    ZERO_ADDRESS: '0x0000000000000000000000000000000000000000'
+    ZERO_ADDRESS: '0x0000000000000000000000000000000000000000',
+    CLOUDFLARE_WORKER_URL: 'https://keyprovider-prod.inheritor.workers.dev'
 };
 
 // Network configurations with fallback RPC endpoints
@@ -87,7 +88,7 @@ const CONTRACT_ABIS = {
     ],
 
     INHERITOR_ABI: [
-        'function inheritances(bytes32 inheritanceId) public view returns (address testatorEOA, address testatorSAA, address beneficiaryEOA, address beneficiarySAA, uint256 gracePeriod, uint8 state, bytes32 arweaveTransactionId, uint256 scheduledTransferTime)',
+        'function inheritances(bytes32 inheritanceId) public view returns (address testatorEOA, address testatorSAA, address beneficiaryEOA, address beneficiarySAA, uint256 gracePeriod, uint8 state, bytes32 arweaveTransactionId, uint256 scheduledTransferTime, string encryptedTestatorData)',
         'function digitalWill(address testatorEOA, uint256 index) public view returns (bytes32)',
         'function digitalWill(address) public view returns (bytes32[])',
         'function testatorLastCheckIn(address) public view returns (uint256)',
@@ -1013,6 +1014,112 @@ const walletUtils = {
 };
 
 // =============================================================================
+// TESTATOR DATA DECRYPTION UTILITIES
+// =============================================================================
+
+// Load dependencies for decryption
+const crypto = require('crypto');
+const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
+
+// Base64 encoding/decoding helpers (standard Base64 with padding)
+const b64 = (buf) => Buffer.from(buf).toString('base64');
+const fromB64 = (s) => Buffer.from(s, 'base64');
+
+/**
+ * HKDF key derivation function (RFC 5869)
+ * @param {Buffer} ikm Input keying material
+ * @param {Buffer} salt Salt value
+ * @param {Buffer} info Context and application specific information
+ * @param {number} length Length of the output key material in bytes
+ * @returns {Buffer} Derived key
+ */
+function hkdf(ikm, salt, info, length) {
+    const prk = crypto.createHmac('sha256', salt).update(ikm).digest();
+
+    const okm = Buffer.alloc(length);
+    let t = Buffer.alloc(0);
+    let offset = 0;
+
+    for (let i = 1; i <= Math.ceil(length / 32); i++) {
+        const data = Buffer.concat([t, info, Buffer.from([i])]);
+        t = crypto.createHmac('sha256', prk).update(data).digest();
+        t.copy(okm, offset, 0, Math.min(32, length - offset));
+        offset += 32;
+    }
+
+    return okm;
+}
+
+const testatorDataUtils = {
+    /**
+     * Decrypt testatorData from on-chain hex string
+     * Unlike asset data, testatorData includes wrappedK in the JSON (no CloudFlare fetch needed)
+     *
+     * @param {string} encryptedTestatorDataHex Hex-encoded encrypted testator data from contract
+     * @param {string} quantumPrivateKeyB64 Base64-encoded ML-KEM-768 private key
+     * @returns {Object} Decrypted testator data {name: string, message: string}
+     */
+    decryptTestatorData: function(encryptedTestatorDataHex, quantumPrivateKeyB64) {
+        try {
+            const encryptedDataBuffer = Buffer.from(encryptedTestatorDataHex.replace('0x', ''), 'hex');
+            const dualEncryptedData = JSON.parse(encryptedDataBuffer.toString('utf8'));
+
+            const externalRecipient = dualEncryptedData.recipients.find(r => r.type === 'mlkem768');
+            if (!externalRecipient) {
+                throw new Error('External ML-KEM recipient not found in encrypted data');
+            }
+
+            const encapsulatedKey = fromB64(externalRecipient.kem_ct);
+            const wrappedKey = fromB64(externalRecipient.wrappedK);
+
+            const privateKey = fromB64(quantumPrivateKeyB64);
+            const sharedSecret = ml_kem768.decapsulate(encapsulatedKey, privateKey);
+
+            const info = Buffer.from(`wrap|v=1|kid=${externalRecipient.kid}|alg=AES-256-GCM`, 'utf8');
+            const encryptionKey = hkdf(Buffer.from(sharedSecret), fromB64(externalRecipient.salt), info, 32);
+
+            const nonce = wrappedKey.subarray(0, 12);
+            const tag = Buffer.from(wrappedKey.subarray(-16));
+            const ciphertext = Buffer.from(wrappedKey.subarray(12, -16));
+
+            const kemHash = crypto.createHash('sha256').update(encapsulatedKey).digest();
+            const kemHashB64 = b64(kemHash);
+            const wrapNonceB64 = b64(nonce);
+            const recV = externalRecipient.recV || 1;  // Fallback to version 1
+            const aad = Buffer.from(`recV=${recV}|kid=${externalRecipient.kid}|type=mlkem768|kem_hash=${kemHashB64}|nonce=${wrapNonceB64}`, 'utf8');
+
+            const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, nonce);
+            decipher.setAuthTag(tag);
+            decipher.setAAD(aad);
+
+            let decryptedSymmetricKey = decipher.update(ciphertext);
+            decryptedSymmetricKey = Buffer.concat([decryptedSymmetricKey, decipher.final()]);
+
+            const version = dualEncryptedData.version || dualEncryptedData.v;
+            const recipientCount = dualEncryptedData.recipients.length;
+            const payloadAAD = Buffer.from(`v=${version}|alg=AES-256-GCM|recipients=${recipientCount}`, 'utf8');
+
+            const payloadNonce = fromB64(dualEncryptedData.nonce);
+            const payloadTag = fromB64(dualEncryptedData.tag);
+            const payloadCiphertext = fromB64(dualEncryptedData.ciphertext);
+
+            const payloadDecipher = crypto.createDecipheriv('aes-256-gcm', decryptedSymmetricKey, payloadNonce);
+            payloadDecipher.setAuthTag(payloadTag);
+            payloadDecipher.setAAD(payloadAAD);
+
+            let decryptedPayload = payloadDecipher.update(payloadCiphertext);
+            decryptedPayload = Buffer.concat([decryptedPayload, payloadDecipher.final()]);
+
+            const testatorData = JSON.parse(decryptedPayload.toString('utf8'));
+            return testatorData;
+
+        } catch (error) {
+            throw new Error(`TestatorData decryption failed: ${error.message}`);
+        }
+    }
+};
+
+// =============================================================================
 // EXPORTS
 // =============================================================================
 
@@ -1031,5 +1138,6 @@ module.exports = {
     networkUtils,
     errorHandlers,
     keyUtils,
-    walletUtils
+    walletUtils,
+    testatorDataUtils
 };

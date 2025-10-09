@@ -39,6 +39,7 @@ const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
 
 // Import shared utilities (following refactored pattern)
 const {
+    NETWORK_CONSTANTS,
     NETWORK_CONFIGS,
     INHERITANCE_STATES,
     STATE_NAMES,
@@ -48,12 +49,6 @@ const {
     errorHandlers,
     keyUtils
 } = require('./utils/shared-utils');
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-const CLOUDFLARE_WORKER_URL = 'https://keyprovider-prod.inheritor.workers.dev';
 
 // Create readline interface
 const rl = readline.createInterface({
@@ -147,7 +142,7 @@ async function retrieveEncryptedSymmetricKey(inheritanceId, network, beneficiary
         const signature = generateAppSignature(inheritanceId, timestamp, beneficiaryEthPrivateKey);
 
         // Use the root path for inheritance key retrieval (per worker code)
-        const url = `${CLOUDFLARE_WORKER_URL}`;
+        const url = `${NETWORK_CONSTANTS.CLOUDFLARE_WORKER_URL}`;
         const params = {
             inheritanceId,
             network,
@@ -168,15 +163,10 @@ async function retrieveEncryptedSymmetricKey(inheritanceId, network, beneficiary
         return fromB64(response.data.encryptedSymmetricKey);
     } catch (error) {
         if (error.response && error.response.status === 404) {
-            throw new Error(`Encrypted symmetric key not found in CloudFlare. This could mean:
-1. The inheritance was created before CloudFlare integration
-2. The symmetric key was never stored in CloudFlare
-3. The CloudFlare worker endpoint has changed
-4. The inheritance ID or network parameter is incorrect
-
-CloudFlare URL attempted: ${CLOUDFLARE_WORKER_URL}
-Network: ${network}
-Inheritance ID: ${inheritanceId}`);
+            throw new Error(`Encrypted symmetric key not found in CloudFlare.
+                CloudFlare URL attempted: ${NETWORK_CONSTANTS.CLOUDFLARE_WORKER_URL}
+                Network: ${network}
+                Inheritance ID: ${inheritanceId}`);
         }
 
         throw errorHandlers.handleContractError(error, 'CloudFlare key retrieval');

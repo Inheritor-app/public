@@ -25,7 +25,8 @@ const {
     networkUtils,
     errorHandlers,
     keyUtils,
-    walletUtils
+    walletUtils,
+    testatorDataUtils
 } = require('./utils/shared-utils');
 
 // =============================================================================
@@ -94,7 +95,8 @@ async function getInheritanceDetails(contract, inheritanceId) {
     state: parseInt(inheritance.state),
     stateName: STATE_NAMES[parseInt(inheritance.state)],
     arweaveTransactionId: inheritance.arweaveTransactionId,
-    scheduledTransferTime: inheritance.scheduledTransferTime.toString()
+    scheduledTransferTime: inheritance.scheduledTransferTime.toString(),
+    encryptedTestatorData: inheritance.encryptedTestatorData
   };
 }
 
@@ -111,7 +113,6 @@ async function fetchBeneficiaryInheritances(contract, beneficiaryAddress) {
     // Call the getBeneficiaryInheritances function
     const inheritanceIds = await contract.getBeneficiaryInheritances(beneficiaryAddress);
 
-    console.log(`Found ${inheritanceIds.length} inheritance(s) in contract.`);
     return inheritanceIds;
   } catch (error) {
     console.error(`Error fetching inheritances from contract: ${error.message}`);
@@ -136,7 +137,15 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
       return;
     }
 
-    console.log(`Found ${inheritanceIds.length} inheritance(s). Fetching details...`);
+    console.log('Fetching details...');
+
+    // Load beneficiary quantum keys for testatorData decryption
+    let quantumKeys = null;
+    try {
+      quantumKeys = keyUtils.loadBeneficiaryQuantumKeys();
+    } catch (error) {
+      console.log('Note: Quantum keys not found. TestatorData will not be decrypted.');
+    }
 
     // Fetch details for each inheritance
     const inheritances = [];
@@ -156,7 +165,50 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
       // Only display if not revoked (convert BigInt to Number for comparison)
       if (Number(inheritance.state) !== INHERITANCE_STATES.REVOKED) {
         console.log(`\n${index}. Inheritance ID: ${inheritance.id}`);
-        console.log(`   Testator: ${inheritance.testatorEOA}`);
+
+        // Try to decrypt and display testator name and message
+        let testatorName = null;
+        let testatorMessage = null;
+        let decryptionSucceeded = false;
+        if (quantumKeys && inheritance.encryptedTestatorData) {
+          try {
+            if (!inheritance.encryptedTestatorData || inheritance.encryptedTestatorData.length < 10) {
+              // Empty or malformed data - skip decryption
+            } else {
+              const decryptedData = testatorDataUtils.decryptTestatorData(
+                inheritance.encryptedTestatorData,
+                quantumKeys.privateKey
+              );
+              testatorName = decryptedData.name;
+              testatorMessage = decryptedData.message;
+              decryptionSucceeded = true;
+            }
+          } catch (error) {
+            // Check if it's because of missing ML-KEM recipient (iOS-only encryption)
+            if (error.message.includes('External ML-KEM recipient not found')) {
+              console.log(`   [Note] This inheritance was created for iOS-only decryption`);
+            } else if (error.message.includes('Unsupported state or unable to authenticate data')) {
+              console.log(`   [Note] Decryption failed - this may be encrypted for a different beneficiary`);
+            }
+          }
+        }
+
+        // Display testator info
+        if (testatorName) {
+          console.log(`   Testator: ${testatorName} (${inheritance.testatorEOA})`);
+        } else {
+          console.log(`   Testator: ${inheritance.testatorEOA}`);
+        }
+
+        // Display message - only if decryption succeeded
+        if (decryptionSucceeded) {
+          if (testatorMessage && testatorMessage.trim() !== '') {
+            console.log(`   Message: "${testatorMessage}"`);
+          } else {
+            console.log(`   Message: none`);
+          }
+        }
+
         console.log(`   State: ${inheritance.stateName}`);
 
         // Only show scheduled transfer time if set
