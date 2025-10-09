@@ -14,11 +14,11 @@ Traditional inheritance depends on intermediaries (attorneys, notaries, executor
 
 To understand the scope of this challenge, assets requiring inheritance fall into three distinct categories:
 
-1. **Purely digital assets where access = ownership** (cryptocurrencies, encrypted files, private keys)
-2. **Registry-bound assets where law mandates formal deeds** (real estate, titled vehicles, regulated securities)
-3. **Institution-mediated assets without formal deed requirements** (online bank accounts, social media profiles, content channels, digital subscriptions, family keepsakes)
+1. **Registry-bound assets where law mandates formal deeds** (real estate, titled vehicles, regulated securities)
+2. **Institution-mediated assets without formal deed requirements** (online bank accounts, social media profiles, content channels, digital subscriptions, family keepsakes)
+3. **Purely digital assets where access = ownership** (cryptocurrencies, encrypted files, private keys)
 
-Traditional inheritance frameworks handle category 2 well, struggle with category 3, and fundamentally fail at category 1. The challenge lies in creating a system that can manage conditional access to encrypted information—releasing it to beneficiaries only after verifiable conditions are met, without depending on trusted custodians or reintroducing the centralization risks that digital systems were designed to eliminate.
+Traditional inheritance frameworks handle category 1 well, struggle with category 2, and fundamentally fail at category 3. The challenge lies in creating a system that can manage conditional access to encrypted information—releasing it to beneficiaries only after verifiable conditions are met, without depending on trusted custodians or reintroducing the centralization risks that digital systems were designed to eliminate.
 
 This white paper introduces On-Chain Digital Inheritance as a solution to this cryptographic paradox, implemented through Inheritor's architectural time-lock* mechanism.
 
