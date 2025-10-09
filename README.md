@@ -42,7 +42,7 @@ UserRecovery/
 ├── .env.example                   # Environment variables template
 ├── .gitignore
 ├── README.md
-|__ WhitePaper.html                # Project White Paper
+|__ WhitePaper.md                  # Project White Paper
 ├── package-lock.json
 ├── package.json
 ```
