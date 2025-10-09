@@ -91,7 +91,9 @@ The cryptographic paradox of conditional access has been well documented in acad
 
 For the first time, Inheritor resolves this paradox through a novel architectural time-lock* mechanism.
 
-Beneficiaries receive complete cryptographic materials—both classical secp256k1 keys for blockchain operations and quantum-safe private keys for asset decryption—from the moment the inheritance is created. All encrypted assets, metadata, and key encapsulation data are stored publicly on Arweave and Ethereum, fully accessible to the beneficiary. Yet premature decryption is architecturally impossible. The enforcement emerges from binding key usability—not key possession—to blockchain-verified state. On iOS, quantum-safe private keys are generated using platform APIs that prevent extraction: the keys exist on-device and sync via iCloud Keychain, but no API permits exporting raw key material.
+Beneficiaries receive complete cryptographic materials—both classical secp256k1 keys for blockchain operations and quantum-safe private keys for asset decryption—from the moment the inheritance is created. All encrypted assets, metadata, and key encapsulation data are stored publicly on Arweave and Ethereum, fully accessible to the beneficiary. Yet premature decryption is architecturally impossible. The enforcement emerges from binding key usability—not key possession—to blockchain-verified state.
+
+On iOS, quantum-safe private keys are generated using platform APIs that prevent extraction, with the root-of-trust anchored in Apple Silicon's Secure Enclave. The keys exist on-device and sync via iCloud Keychain, protected by Secure Enclave hardware that encrypts all Keychain data using device-bound keys that never leave the secure processor. Apple's CryptoKit API provides no method to export raw key material, creating layered protection where both the API design and hardware-backed encryption work in concert to make key extraction architecturally impossible.
 
 The Inheritor application acts as gatekeeper, verifying smart contract state (Designated → Claimable → Claimed) before authorizing any decryption operation using these protected keys. Even if malicious code were introduced, the platform-level constraints prevent key exfiltration, and the publicly observable blockchain state ensures transparent verification of inheritance conditions.
 
@@ -109,7 +111,7 @@ This breakthrough creates tangible benefits for users:
 
   The audit path is simple: observe network traffic to verify only public blockchain and storage connections with documented data formats. The architecture resists compromise even from malicious insiders or developers, providing security guarantees that can be independently verified rather than simply trusted.
 
-What does this mean in practice?
+**What does this mean in practice?**
 
 With Inheritor, users can secure their digital legacy without trusting banks or attorneys to hold keys, without paying recurring custody fees, and without depending on any company staying in business for decades. For cryptocurrency wallets specifically, users encrypt their private keys using quantum-safe encryption with beneficiaries designated from the outset. The encrypted materials are stored publicly on blockchain infrastructure where they cannot be lost or destroyed—eliminating the physical vulnerabilities of hardware wallets or paper seed phrases—while iOS platform security prevents the app or even the beneficiary from extracting usable key material until smart contract conditions verify the inheritance is claimable.
 
