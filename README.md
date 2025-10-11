@@ -43,6 +43,7 @@ UserRecovery/
 ├── .gitignore
 ├── README.md
 |__ WhitePaper.md                  # Project White Paper
+|__ WhitePaper.pfd                 # Project White Paper
 ├── package-lock.json
 ├── package.json
 ```
