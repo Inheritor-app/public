@@ -22,6 +22,9 @@ yarn-error.log*
 # Exported key files (contain sensitive private keys)
 keys/
 
+# WhitePaper markdown (PDF is the official version)
+WhitePaper.md
+
 # Mac OS
 .DS_Store
 
