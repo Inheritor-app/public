@@ -10,7 +10,7 @@
  * For more information, see: https://creativecommons.org/publicdomain/zero/1.0/
  *
  * This module provides common functionality for all scripts including:
- * - Contract utilities and deployment block optimization
+ * - Contract address validation
  * - Formatting utilities
  * - Network configuration and setup
  * - Constants and ABI definitions
@@ -108,6 +108,7 @@ const CONTRACT_ABIS = {
         'function updateVerifier(address verifier, uint256 verificationDelay) external',
         'function isClaimable(bytes32 inheritanceId) public returns (bool)',
         'function getBeneficiaryInheritances(address beneficiaryEOA) external view returns (bytes32[] memory)',
+        'function exportContractForMigration(bytes32[] calldata inheritanceIds) external view returns (tuple(bytes32[] inheritanceIds, tuple(address testatorEOA, address testatorSAA, address beneficiaryEOA, address beneficiarySAA, uint256 gracePeriod, uint8 state, bytes32 arweaveTransactionId, uint256 scheduledTransferTime, string encryptedTestatorData)[] inheritanceData, address[] testators, uint256[] lastCheckIns, uint256[] checkInIntervals, address[] verifiers, uint256[] verificationDelays))',
         'event AddInheritance(bytes32 indexed inheritanceId, address indexed testatorEOA, address indexed beneficiaryEOA)'
     ]
 };
@@ -191,9 +192,6 @@ const formatters = {
 // CONTRACT UTILITIES
 // =============================================================================
 
-// Global deployment block cache
-const deploymentBlockCache = {};
-
 const contractUtils = {
     /**
      * Validate Ethereum address
@@ -205,90 +203,6 @@ const contractUtils = {
             return false;
         }
         return ethers.isAddress(address);
-    },
-
-    /**
-     * Find deployment block by querying for earliest log
-     * @param {object} provider - Ethers provider
-     * @param {string} address - Contract address
-     * @returns {number} - Block number of earliest event (deployment block or later)
-     */
-    findDeploymentBlockViaLogs: async function(provider, address) {
-        try {
-            // The provider might be a Wallet, so we need to get the actual JSON-RPC provider
-            let actualProvider = provider;
-
-            // If it's a Wallet, get the provider from it
-            if (provider.constructor?.name === 'Wallet' && provider.provider) {
-                actualProvider = provider.provider;
-            }
-
-            // Use the ethers v6 getLogs method with proper filter object
-            const logs = await actualProvider.getLogs({
-                address: address,
-                fromBlock: 0,
-                toBlock: "latest"
-            });
-
-            if (!logs || logs.length === 0) {
-                return 0;
-            }
-
-            // Get the earliest log's block number
-            const firstLogBlock = logs[0].blockNumber;
-            return firstLogBlock;
-
-        } catch (error) {
-            throw error; // Let the calling function handle error logging
-        }
-    },
-
-    /**
-     * Get deployment block for a contract with caching
-     * This is the main function modules should use to avoid rate limiting
-     * @param {object} contract - Ethers contract instance
-     * @param {string} address - Contract address (optional, will use contract.target)
-     * @returns {number} - Block number to start queries from (0 if not found)
-     */
-    getDeploymentBlockForContract: async function(contract, address = null) {
-        const contractAddress = address || contract.target || contract.address;
-
-        if (!contractAddress) {
-            console.warn('⚠️ No contract address provided, using block 0');
-            return 0;
-        }
-
-        // Getting deployment block for contract optimization
-
-        // Check cache first
-        const cacheKey = contractAddress.toLowerCase();
-        if (deploymentBlockCache[cacheKey]) {
-            // Using cached deployment block
-            return deploymentBlockCache[cacheKey];
-        }
-
-        // Find it dynamically
-        try {
-            // Searching blockchain for earliest event
-            const block = await this.findDeploymentBlockViaLogs(
-                contract.runner || contract.provider,
-                contractAddress
-            );
-
-            // Cache the result (even if it's 0)
-            deploymentBlockCache[cacheKey] = block;
-
-            if (block > 0) {
-                // Cached deployment block with earliest event found
-            } else {
-                // Cached deployment block with no events found, using fallback
-            }
-
-            return block;
-        } catch (error) {
-            console.warn(`❌ Failed to get deployment block for ${contractAddress}:`, error.message);
-            return 0;
-        }
     }
 };
 

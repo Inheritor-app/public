@@ -87,49 +87,32 @@ const getContractAddressForNetwork = (provider, networkConfig) =>
 // =============================================================================
 
 /**
- * Get all inheritances for a testator using optimized event logs with deployment block
+ * Get all inheritances for a testator using efficient bulk data export
  * @param {ethers.Contract} contract Inheritor contract
  * @param {string} testatorAddress Testator's address
- * @returns {Promise<Array<string>>} Array of inheritance IDs
+ * @returns {Promise<Object>} Object containing inheritanceIds array and migrationData
  */
 async function getTestatorInheritances(contract, testatorAddress) {
   console.log(`Searching for inheritances via events for ${testatorAddress}...`);
 
-  // Get deployment block to optimize query range
-  const startBlock = await contractUtils.getDeploymentBlockForContract(contract);
-
   // Create a filter for AddInheritance events where testatorEOA is our address
   const filter = contract.filters.AddInheritance(null, testatorAddress, null);
 
-  // Query all matching events with optimized block range
+  // Query all matching events to get inheritance IDs
   console.log('Fetching event logs...');
-  const events = await contract.queryFilter(filter, startBlock, 'latest');
+  const events = await contract.queryFilter(filter, 0, 'latest');
+  const inheritanceIds = events.map(event => event.args.inheritanceId);
 
-  // Extract the inheritance IDs from the events
-  return events.map(event => event.args.inheritanceId);
-}
+  if (inheritanceIds.length === 0) {
+    return { inheritanceIds: [], migrationData: null };
+  }
 
-/**
- * Load inheritance details from the contract
- * @param {ethers.Contract} contract Inheritor contract
- * @param {string} inheritanceId Inheritance ID
- * @returns {Promise<Object>} Inheritance details
- */
-async function getInheritanceDetails(contract, inheritanceId) {
-  const inheritance = await contract.inheritances(inheritanceId);
-  return {
-    id: inheritanceId,
-    testatorEOA: inheritance.testatorEOA,
-    testatorSAA: inheritance.testatorSAA,
-    beneficiaryEOA: inheritance.beneficiaryEOA,
-    beneficiarySAA: inheritance.beneficiarySAA,
-    gracePeriod: inheritance.gracePeriod.toString(),
-    state: parseInt(inheritance.state),
-    stateName: STATE_NAMES[parseInt(inheritance.state)],
-    arweaveTransactionId: inheritance.arweaveTransactionId,
-    scheduledTransferTime: inheritance.scheduledTransferTime.toString(),
-    encryptedTestatorData: inheritance.encryptedTestatorData
-  };
+  // Use exportContractForMigration for efficient bulk data retrieval
+  // This public function enables emergency recovery and third-party tools
+  console.log('Fetching complete inheritance data...');
+  const migrationData = await contract.exportContractForMigration(inheritanceIds);
+
+  return { inheritanceIds, migrationData };
 }
 
 // =============================================================================
@@ -140,15 +123,15 @@ async function getInheritanceDetails(contract, inheritanceId) {
  * View Digital Will function
  * Fetches and displays all inheritances and check-in information
  *
- * @param {ethers.Contract} contract - Inheritor contract instance
+ * @param {ethers.Contract} contract - Inherator contract instance
  * @param {string} testatorAddress - Testator's Ethereum address (0x...)
  */
 async function viewDigitalWill(contract, testatorAddress) {
   console.log(`\nFetching digital will information for ${testatorAddress}...`);
 
   try {
-    // Get all inheritance IDs from events
-    const inheritanceIds = await getTestatorInheritances(contract, testatorAddress);
+    // Get all inheritance data using efficient bulk export
+    const { inheritanceIds, migrationData } = await getTestatorInheritances(contract, testatorAddress);
 
     if (inheritanceIds.length === 0) {
       console.log('No inheritances found for this testator.');
@@ -158,9 +141,17 @@ async function viewDigitalWill(contract, testatorAddress) {
 
     console.log(`Found ${inheritanceIds.length} inheritance(s).`);
 
-    // Get check-in information
-    const lastCheckIn = await contract.testatorLastCheckIn(testatorAddress);
-    const checkInInterval = await contract.checkInInterval(testatorAddress);
+    // Extract testator state from migration data
+    const testatorIndex = migrationData.testators.findIndex(
+      addr => addr.toLowerCase() === testatorAddress.toLowerCase()
+    );
+
+    if (testatorIndex === -1) {
+      throw new Error('Testator data not found in migration data');
+    }
+
+    const lastCheckIn = Number(migrationData.lastCheckIns[testatorIndex]);
+    const checkInInterval = Number(migrationData.checkInIntervals[testatorIndex]);
 
     console.log('\n=== Check-in Information ===');
     console.log(`Last Check-in: ${formatTimestamp(lastCheckIn)}`);
@@ -169,28 +160,31 @@ async function viewDigitalWill(contract, testatorAddress) {
     const nextCheckInTime = lastCheckIn + checkInInterval;
     console.log(`Next Check-in Due: ${formatTimestamp(nextCheckInTime)}`);
 
-    // Fetch details for each inheritance
+    // Display inheritance details from migration data
     console.log('\n=== Inheritances ===');
 
-    for (const inheritanceId of inheritanceIds) {
+    for (let i = 0; i < migrationData.inheritanceData.length; i++) {
       try {
-        const details = await getInheritanceDetails(contract, inheritanceId);
+        const inheritance = migrationData.inheritanceData[i];
+        const inheritanceId = migrationData.inheritanceIds[i];
+        const state = Number(inheritance.state);
 
         // Skip displaying purged inheritances
-        if (details.state === INHERITANCE_STATES.PURGED) {
+        if (state === INHERITANCE_STATES.PURGED) {
           continue;
         }
 
         console.log(`\nInheritance ID: ${inheritanceId}`);
-        console.log(`State: ${details.stateName}`);
-        console.log(`Beneficiary: ${details.beneficiaryEOA}`);
-        console.log(`Grace Period: ${formatDuration(details.gracePeriod)}`);
+        console.log(`State: ${STATE_NAMES[state]}`);
+        console.log(`Beneficiary: ${inheritance.beneficiaryEOA}`);
+        console.log(`Grace Period: ${formatDuration(Number(inheritance.gracePeriod))}`);
 
-        if (BigInt(details.scheduledTransferTime) > 0n) {
-          console.log(`Scheduled Transfer: ${formatTimestamp(details.scheduledTransferTime)}`);
+        const scheduledTransferTime = Number(inheritance.scheduledTransferTime);
+        if (scheduledTransferTime > 0) {
+          console.log(`Scheduled Transfer: ${formatTimestamp(scheduledTransferTime)}`);
         }
       } catch (error) {
-        console.log(`Error fetching details for inheritance ${inheritanceId}: ${error.message}`);
+        console.log(`Error processing inheritance ${migrationData.inheritanceIds[i]}: ${error.message}`);
       }
     }
 
@@ -223,20 +217,27 @@ async function revokeAllInheritances(contract, testatorKeys, signer, provider, c
   try {
     console.log('Revoking all inheritances...');
 
-    // Always get fresh inheritance data from blockchain using optimized method
-    const inheritanceIds = await getTestatorInheritances(contract, testatorKeys.address);
+    // Always get fresh inheritance data from blockchain using efficient bulk export
+    const { inheritanceIds, migrationData } = await getTestatorInheritances(contract, testatorKeys.address);
 
     if (inheritanceIds.length === 0) {
       console.log('No inheritances found to revoke.');
       return;
     }
 
-    // Fetch inheritance details individually
-    console.log('Fetching inheritance details...');
+    // Extract inheritance details from migration data
+    console.log('Processing inheritance details...');
     const inheritances = [];
-    for (const id of inheritanceIds) {
-      const details = await getInheritanceDetails(contract, id);
-      inheritances.push(details);
+    for (let i = 0; i < migrationData.inheritanceData.length; i++) {
+      const inheritance = migrationData.inheritanceData[i];
+      const inheritanceId = migrationData.inheritanceIds[i];
+
+      inheritances.push({
+        id: inheritanceId,
+        state: Number(inheritance.state),
+        stateName: STATE_NAMES[Number(inheritance.state)],
+        beneficiaryEOA: inheritance.beneficiaryEOA
+      });
     }
     
     // Create testator wallet for signing revocation transactions
