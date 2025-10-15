@@ -31,9 +31,9 @@ const path = require('path');
 const NETWORK_CONSTANTS = {
     ETHEREUM_CHAIN_ID: 1,
     ARBITRUM_CHAIN_ID: 42161,
-    PROXY_CONTRACT_ADDRESS: '0x8743E613486Df310cC549cd57860c28c8438892E', // Ethereum, V2.1.0 (production)
+    PROXY_CONTRACT_ADDRESS: '0xe33AB05Eef0d1803ca564C9a1DFaC6797853D3d2', // Ethereum, V2.1.0 (production)
     ZERO_ADDRESS: '0x0000000000000000000000000000000000000000',
-    CLOUDFLARE_WORKER_URL: 'https://keyprovider-test.inheritor.workers.dev'
+    CLOUDFLARE_WORKER_URL: 'https://keyprovider-prod.inheritor.workers.dev'
 };
 
 // Network configurations with fallback RPC endpoints
