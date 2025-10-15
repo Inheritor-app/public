@@ -1,4 +1,11 @@
 {
+  "name": "inheritor-cli-tools",
+  "version": "2.0.0",
+  "description": "Public domain CLI tools for Inheritor digital inheritance",
+  "license": "CC0-1.0",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "dependencies": {
     "@noble/post-quantum": "^0.5.2",
     "axios": "^1.8.4",
