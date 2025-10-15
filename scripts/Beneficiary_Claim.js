@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 /**
+ * SPDX-License-Identifier: CC0-1.0
+ *
  * Inheritance Claim Tool - Quantum-Safe Implementation
+ *
+ * This work has been dedicated to the public domain under the CC0 1.0 Universal Public Domain Dedication.
+ * To the extent possible under law, the author(s) have waived all copyright and related or neighboring
+ * rights to this work. This work is published from: Netherlands.
+ *
+ * For more information, see: https://creativecommons.org/publicdomain/zero/1.0/
  *
  * This tool enables beneficiaries to claim digital inheritances using quantum-resistant cryptography
  * and a split-storage architecture for enhanced security.
@@ -146,7 +154,7 @@ async function retrieveEncryptedSymmetricKey(inheritanceId, network, beneficiary
         const params = {
             inheritanceId,
             network,
-            appSignature: signature,
+            beneficiarySignature: signature,
             timestamp
         };
 
@@ -240,11 +248,11 @@ async function retrieveAssetFromArweave(transactionId) {
             tag: fromB64(arweaveData.tag),
             fileType: arweaveData.fileType || 'bin',
             algorithm: arweaveData.algorithm || 'X-Wing/ML-KEM-768 + AES-256-GCM',
-            version: arweaveData.version || 1, // Include version for AAD
-            recipients: arweaveData.recipients || [], // Include recipients for count
+            version: arweaveData.version,
+            recipients: arweaveData.recipients,
             externalRecipient: {
-                recV: externalRecipient.recV || 1, // Recipient version with fallback
-                kid: externalRecipient.kid, // Include the actual kid for HKDF
+                recV: externalRecipient.recV,
+                kid: externalRecipient.kid,
                 salt: fromB64(externalRecipient.salt),
                 wrappedKey: fromB64(externalRecipient.wrappedK)
             }

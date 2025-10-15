@@ -1,8 +1,16 @@
 #!/usr/bin/env node
 
 /**
+ * SPDX-License-Identifier: CC0-1.0
+ *
  * Inheritor Emergency Management Tool
- * 
+ *
+ * This work has been dedicated to the public domain under the CC0 1.0 Universal Public Domain Dedication.
+ * To the extent possible under law, the author(s) have waived all copyright and related or neighboring
+ * rights to this work. This work is published from: Netherlands.
+ *
+ * For more information, see: https://creativecommons.org/publicdomain/zero/1.0/
+ *
  * This script allows testators to manage their digital inheritances in emergency situations.
  * It provides functions to:
  * 1. View the Digital Will information
@@ -87,108 +95,18 @@ const getContractAddressForNetwork = (provider, networkConfig) =>
 async function getTestatorInheritances(contract, testatorAddress) {
   console.log(`Searching for inheritances via events for ${testatorAddress}...`);
 
-  try {
-    // Get deployment block to optimize query range
-    const startBlock = await contractUtils.getDeploymentBlockForContract(contract);
+  // Get deployment block to optimize query range
+  const startBlock = await contractUtils.getDeploymentBlockForContract(contract);
 
-    // Create a filter for AddInheritance events where testatorEOA is our address
-    const filter = contract.filters.AddInheritance(null, testatorAddress, null);
+  // Create a filter for AddInheritance events where testatorEOA is our address
+  const filter = contract.filters.AddInheritance(null, testatorAddress, null);
 
-    // Query all matching events with optimized block range
-    console.log('Fetching event logs...');
-    const events = await contract.queryFilter(filter, startBlock, 'latest');
+  // Query all matching events with optimized block range
+  console.log('Fetching event logs...');
+  const events = await contract.queryFilter(filter, startBlock, 'latest');
 
-    // Extract the inheritance IDs from the events
-    return events.map(event => event.args.inheritanceId);
-  } catch (error) {
-    console.error(`Error fetching inheritances via events: ${error.message}`);
-
-    // Fall back to direct mapping access as a last resort
-    console.log('Attempting fallback method...');
-    return getInheritancesViaMapping(contract, testatorAddress);
-  }
-}
-
-/**
- * Fallback method to get inheritances via direct mapping access
- * @param {ethers.Contract} contract Inheritor contract
- * @param {string} testatorAddress Testator's address
- * @returns {Promise<Array<string>>} Array of inheritance IDs
- */
-async function getInheritancesViaMapping(contract, testatorAddress) {
-  try {
-    // First try the array return version (depends on contract version)
-    const inheritances = await contract.digitalWill(testatorAddress);
-    return inheritances;
-  } catch (error) {
-    // Fallback to iterative approach
-    const inheritances = [];
-    let index = 0;
-    
-    while (true) {
-      try {
-        const inheritanceId = await contract.digitalWill(testatorAddress, index);
-        inheritances.push(inheritanceId);
-        index++;
-      } catch (error) {
-        break;
-      }
-    }
-    
-    return inheritances;
-  }
-}
-
-/**
- * Fallback method for viewDigitalWill when exportContractForMigration fails
- * @param {ethers.Contract} contract - Inheritor contract instance
- * @param {string} testatorAddress - Testator's Ethereum address
- */
-async function viewDigitalWillFallback(contract, testatorAddress) {
-  // Always get fresh inheritance IDs from blockchain
-  const inheritanceIds = await getTestatorInheritances(contract, testatorAddress);
-
-  if (inheritanceIds.length === 0) {
-    console.log('No inheritances found for this testator.');
-    return;
-  }
-
-  console.log(`Found ${inheritanceIds.length} inheritance(s).`);
-
-  // Get current check-in information
-  const lastCheckIn = await contract.testatorLastCheckIn(testatorAddress);
-  const checkInInterval = await contract.checkInInterval(testatorAddress);
-
-  // Display check-in information
-  console.log('\n=== Check-in Information ===');
-  console.log(`Last Check-in: ${formatTimestamp(lastCheckIn)}`);
-  console.log(`Check-in Interval: ${formatDuration(checkInInterval)}`);
-
-  // Safely calculate next check-in
-  const nextCheckInTime = lastCheckIn + checkInInterval;
-  console.log(`Next Check-in Due: ${formatTimestamp(nextCheckInTime)}`);
-
-  // Get details for each inheritance
-  console.log('\n=== Inheritances ===');
-
-  for (const id of inheritanceIds) {
-    // Get fresh details from blockchain
-    const details = await getInheritanceDetails(contract, id);
-
-    // Skip displaying purged inheritances
-    if (details.state === INHERITANCE_STATES.PURGED) {
-      continue;
-    }
-
-    console.log(`\nInheritance ID: ${id}`);
-    console.log(`State: ${details.stateName}`);
-    console.log(`Beneficiary: ${details.beneficiaryEOA}`);
-    console.log(`Grace Period: ${formatDuration(details.gracePeriod)}`);
-
-    if (BigInt(details.scheduledTransferTime) > 0n) {
-      console.log(`Scheduled Transfer: ${formatTimestamp(details.scheduledTransferTime)}`);
-    }
-  }
+  // Extract the inheritance IDs from the events
+  return events.map(event => event.args.inheritanceId);
 }
 
 /**
@@ -209,7 +127,8 @@ async function getInheritanceDetails(contract, inheritanceId) {
     state: parseInt(inheritance.state),
     stateName: STATE_NAMES[parseInt(inheritance.state)],
     arweaveTransactionId: inheritance.arweaveTransactionId,
-    scheduledTransferTime: inheritance.scheduledTransferTime.toString()
+    scheduledTransferTime: inheritance.scheduledTransferTime.toString(),
+    encryptedTestatorData: inheritance.encryptedTestatorData
   };
 }
 
@@ -218,7 +137,7 @@ async function getInheritanceDetails(contract, inheritanceId) {
 // =============================================================================
 
 /**
- * View Digital Will function - Optimized with exportContractForMigration
+ * View Digital Will function
  * Fetches and displays all inheritances and check-in information
  *
  * @param {ethers.Contract} contract - Inheritor contract instance
@@ -228,71 +147,55 @@ async function viewDigitalWill(contract, testatorAddress) {
   console.log(`\nFetching digital will information for ${testatorAddress}...`);
 
   try {
-    // First, get all inheritance IDs from optimized events
+    // Get all inheritance IDs from events
     const inheritanceIds = await getTestatorInheritances(contract, testatorAddress);
 
     if (inheritanceIds.length === 0) {
       console.log('No inheritances found for this testator.');
+      await question('\nPress Enter to return to the main menu...');
       return;
     }
 
-    console.log(`Found ${inheritanceIds.length} inheritance(s). Fetching complete data...`);
+    console.log(`Found ${inheritanceIds.length} inheritance(s).`);
 
-    // Use exportContractForMigration to get all data in one call
-    const migrationData = await contract.exportContractForMigration(inheritanceIds);
+    // Get check-in information
+    const lastCheckIn = await contract.testatorLastCheckIn(testatorAddress);
+    const checkInInterval = await contract.checkInInterval(testatorAddress);
 
-    // Find the testator's data in the migration results
-    let testatorIndex = -1;
-    for (let i = 0; i < migrationData.testators.length; i++) {
-      if (migrationData.testators[i].toLowerCase() === testatorAddress.toLowerCase()) {
-        testatorIndex = i;
-        break;
-      }
-    }
+    console.log('\n=== Check-in Information ===');
+    console.log(`Last Check-in: ${formatTimestamp(lastCheckIn)}`);
+    console.log(`Check-in Interval: ${formatDuration(checkInInterval)}`);
 
-    if (testatorIndex >= 0) {
-      // Display check-in information from migration data
-      const lastCheckIn = Number(migrationData.lastCheckIns[testatorIndex]);
-      const checkInInterval = Number(migrationData.checkInIntervals[testatorIndex]);
+    const nextCheckInTime = lastCheckIn + checkInInterval;
+    console.log(`Next Check-in Due: ${formatTimestamp(nextCheckInTime)}`);
 
-      console.log('\n=== Check-in Information ===');
-      console.log(`Last Check-in: ${formatTimestamp(lastCheckIn)}`);
-      console.log(`Check-in Interval: ${formatDuration(checkInInterval)}`);
-
-      // Safely calculate next check-in
-      const nextCheckInTime = lastCheckIn + checkInInterval;
-      console.log(`Next Check-in Due: ${formatTimestamp(nextCheckInTime)}`);
-    } else {
-      console.log('\n⚠️  Warning: Could not find check-in information in migration data');
-    }
-
-    // Process and display inheritances from migration data
-    const inheritances = contractUtils.processMigrationDataToInheritances(migrationData);
-
+    // Fetch details for each inheritance
     console.log('\n=== Inheritances ===');
 
-    for (const inheritance of inheritances) {
-      // Skip displaying purged inheritances (convert BigInt to Number for comparison)
-      if (Number(inheritance.state) === INHERITANCE_STATES.PURGED) {
-        continue;
-      }
+    for (const inheritanceId of inheritanceIds) {
+      try {
+        const details = await getInheritanceDetails(contract, inheritanceId);
 
-      console.log(`\nInheritance ID: ${inheritance.id}`);
-      console.log(`State: ${inheritance.stateName}`);
-      console.log(`Beneficiary: ${inheritance.beneficiaryEOA}`);
-      console.log(`Grace Period: ${formatDuration(inheritance.gracePeriod)}`);
+        // Skip displaying purged inheritances
+        if (details.state === INHERITANCE_STATES.PURGED) {
+          continue;
+        }
 
-      if (BigInt(inheritance.scheduledTransferTime) > 0n) {
-        console.log(`Scheduled Transfer: ${formatTimestamp(inheritance.scheduledTransferTime)}`);
+        console.log(`\nInheritance ID: ${inheritanceId}`);
+        console.log(`State: ${details.stateName}`);
+        console.log(`Beneficiary: ${details.beneficiaryEOA}`);
+        console.log(`Grace Period: ${formatDuration(details.gracePeriod)}`);
+
+        if (BigInt(details.scheduledTransferTime) > 0n) {
+          console.log(`Scheduled Transfer: ${formatTimestamp(details.scheduledTransferTime)}`);
+        }
+      } catch (error) {
+        console.log(`Error fetching details for inheritance ${inheritanceId}: ${error.message}`);
       }
     }
 
   } catch (error) {
-    console.error('\n⚠️  Error fetching digital will data:', error.message);
-    console.log('Falling back to individual queries...');
-
-    // Fallback to original method if exportContractForMigration fails
-    await viewDigitalWillFallback(contract, testatorAddress);
+    console.error('\n⚠️  Error:', error.message);
   }
 
   // Wait for user acknowledgment
@@ -328,20 +231,12 @@ async function revokeAllInheritances(contract, testatorKeys, signer, provider, c
       return;
     }
 
-    // Use exportContractForMigration to get all inheritance details in one call
-    let inheritances = [];
-    try {
-      console.log('Fetching inheritance details using exportContractForMigration...');
-      const migrationData = await contract.exportContractForMigration(inheritanceIds);
-      inheritances = contractUtils.processMigrationDataToInheritances(migrationData);
-      console.log(`✅ Successfully loaded ${inheritances.length} inheritance details`);
-    } catch (migrationError) {
-      console.log('⚠️ exportContractForMigration failed, falling back to individual queries...');
-      // Fallback to individual queries
-      for (const id of inheritanceIds) {
-        const details = await getInheritanceDetails(contract, id);
-        inheritances.push(details);
-      }
+    // Fetch inheritance details individually
+    console.log('Fetching inheritance details...');
+    const inheritances = [];
+    for (const id of inheritanceIds) {
+      const details = await getInheritanceDetails(contract, id);
+      inheritances.push(details);
     }
     
     // Create testator wallet for signing revocation transactions
@@ -797,7 +692,7 @@ async function main() {
       console.log('3. The file is named in the format: InheritorKeys_YYYY-MM-DD.json');
       throw new Error('Failed to load testator keys');
     }
-    
+
     // Get gas wallet private key from environment variable
     let gasWalletKey = process.env.GAS_WALLET_PRIVATE_KEY;
     if (!gasWalletKey) {

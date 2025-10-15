@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 /**
+ * SPDX-License-Identifier: CC0-1.0
+ *
  * Inheritor Beneficiary Check Tool
+ *
+ * This work has been dedicated to the public domain under the CC0 1.0 Universal Public Domain Dedication.
+ * To the extent possible under law, the author(s) have waived all copyright and related or neighboring
+ * rights to this work. This work is published from: Netherlands.
+ *
+ * For more information, see: https://creativecommons.org/publicdomain/zero/1.0/
  *
  * This script allows beneficiaries to check the status of their inheritances
  * and verify if they are claimable. It provides functions to:

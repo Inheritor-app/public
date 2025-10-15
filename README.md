@@ -31,6 +31,7 @@ UserRecovery/
 ├── Manuals/
 │   ├── CheckClaimable.md
 │   ├── ClaimManual.md
+│   ├── ExfiltrationVerification.pdf  # Key exfiltration verification protocol
 │   └── TestatorManual.md
 ├── keys/                          # Directory for exported key files
 ├── scripts/
@@ -103,6 +104,12 @@ These tools provide direct access to your blockchain assets and sensitive crypto
 - Verify all transaction details before confirming
 - Move any claimed assets to secure storage immediately
 - Delete exported key files after use or store them in secure, encrypted storage
+
+### ML-KEM-768 Private Key Protection
+
+The Inheritor system uses post-quantum cryptography (ML-KEM-768) for beneficiary key encryption. To verify that the iOS application does not exfiltrate your ML-KEM-768 private keys, see [Manuals/ExfiltrationVerification.pdf](Manuals/ExfiltrationVerification.pdf).
+
+This document provides a user-verifiable protocol for detecting potential key exfiltration through network traffic analysis. Users can independently confirm that CloudFlare POST requests remain under 700 bytes (legitimate) versus the 2,400+ bytes required to exfiltrate an ML-KEM-768 private key—providing mathematically certain detection through simple packet size monitoring.
 
 
 #### Shared Utilities Module

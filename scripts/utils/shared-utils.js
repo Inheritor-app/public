@@ -1,5 +1,13 @@
 /**
+ * SPDX-License-Identifier: CC0-1.0
+ *
  * Shared utilities for Inheritor emergency management scripts
+ *
+ * This work has been dedicated to the public domain under the CC0 1.0 Universal Public Domain Dedication.
+ * To the extent possible under law, the author(s) have waived all copyright and related or neighboring
+ * rights to this work. This work is published from: Netherlands.
+ *
+ * For more information, see: https://creativecommons.org/publicdomain/zero/1.0/
  *
  * This module provides common functionality for all scripts including:
  * - Contract utilities and deployment block optimization
@@ -7,7 +15,8 @@
  * - Network configuration and setup
  * - Constants and ABI definitions
  * - Error handling patterns
- * - Migration data processing
+ * - Quantum-safe key management
+ * - Testator data decryption
  */
 
 const { ethers } = require('ethers');
@@ -22,9 +31,9 @@ const path = require('path');
 const NETWORK_CONSTANTS = {
     ETHEREUM_CHAIN_ID: 1,
     ARBITRUM_CHAIN_ID: 42161,
-    PROXY_CONTRACT_ADDRESS: '0xe33AB05Eef0d1803ca564C9a1DFaC6797853D3d2', // Ethereum, V2.1.0 (production)
+    PROXY_CONTRACT_ADDRESS: '0x8743E613486Df310cC549cd57860c28c8438892E', // Ethereum, V2.1.0 (production)
     ZERO_ADDRESS: '0x0000000000000000000000000000000000000000',
-    CLOUDFLARE_WORKER_URL: 'https://keyprovider-prod.inheritor.workers.dev'
+    CLOUDFLARE_WORKER_URL: 'https://keyprovider-test.inheritor.workers.dev'
 };
 
 // Network configurations with fallback RPC endpoints
@@ -99,7 +108,6 @@ const CONTRACT_ABIS = {
         'function updateVerifier(address verifier, uint256 verificationDelay) external',
         'function isClaimable(bytes32 inheritanceId) public returns (bool)',
         'function getBeneficiaryInheritances(address beneficiaryEOA) external view returns (bytes32[] memory)',
-        'function exportContractForMigration(bytes32[] calldata inheritanceIds) external view returns (tuple(bytes32[] inheritanceIds, tuple(address testatorEOA, address testatorSAA, address beneficiaryEOA, address beneficiarySAA, uint256 gracePeriod, uint8 state, bytes32 arweaveTransactionId, uint256 scheduledTransferTime)[] inheritanceData, address[] testators, uint256[] lastCheckIns, uint256[] checkInIntervals, address[] verifiers, uint256[] verificationDelays, bool[] needsVerification, uint256[] verificationCounts))',
         'event AddInheritance(bytes32 indexed inheritanceId, address indexed testatorEOA, address indexed beneficiaryEOA)'
     ]
 };
@@ -281,96 +289,6 @@ const contractUtils = {
             console.warn(`❌ Failed to get deployment block for ${contractAddress}:`, error.message);
             return 0;
         }
-    },
-
-    /**
-     * Process migration data into structured testator information
-     * @param {object} migrationData - Raw data from exportContractForMigration
-     * @returns {array} Array of processed testator information
-     */
-    processMigrationDataToTestators: function(migrationData) {
-        const testatorInfoList = [];
-        const now = Math.floor(Date.now() / 1000);
-
-        // Create a map of inheritance counts per testator
-        const inheritanceCountMap = new Map();
-        const inheritanceIdsByTestator = new Map();
-
-        for (let i = 0; i < migrationData.inheritanceData.length; i++) {
-            const inheritance = migrationData.inheritanceData[i];
-            const testatorEOA = inheritance.testatorEOA;
-            const inheritanceId = migrationData.inheritanceIds[i];
-
-            if (!inheritanceCountMap.has(testatorEOA)) {
-                inheritanceCountMap.set(testatorEOA, 0);
-                inheritanceIdsByTestator.set(testatorEOA, []);
-            }
-            inheritanceCountMap.set(testatorEOA, inheritanceCountMap.get(testatorEOA) + 1);
-            inheritanceIdsByTestator.get(testatorEOA).push(inheritanceId);
-        }
-
-        // Process each testator from the migration data
-        for (let i = 0; i < migrationData.testators.length; i++) {
-            const testatorEOA = migrationData.testators[i];
-            const lastCheckIn = Number(migrationData.lastCheckIns[i]);
-            const checkInInterval = Number(migrationData.checkInIntervals[i]);
-            const verifier = migrationData.verifiers[i];
-            const verificationDelay = Number(migrationData.verificationDelays[i]);
-            const needsVerification = migrationData.needsVerification[i];
-            const verificationCount = Number(migrationData.verificationCounts[i]);
-
-            const inheritanceCount = inheritanceCountMap.get(testatorEOA) || 0;
-            const inheritanceIds = inheritanceIdsByTestator.get(testatorEOA) || [];
-
-            // Calculate time until next check-in
-            const nextCheckInTime = lastCheckIn + checkInInterval;
-            const timeUntilNextCheckIn = nextCheckInTime - now;
-
-            testatorInfoList.push({
-                address: testatorEOA,
-                lastCheckIn: lastCheckIn,
-                checkInInterval: checkInInterval,
-                nextCheckInTime: nextCheckInTime,
-                timeUntilNextCheckIn: timeUntilNextCheckIn,
-                verifier: verifier,
-                verificationDelay: verificationDelay,
-                needsVerification: needsVerification,
-                verificationCount: verificationCount,
-                inheritanceCount: inheritanceCount,
-                inheritanceIds: inheritanceIds
-            });
-        }
-
-        return testatorInfoList;
-    },
-
-    /**
-     * Process migration data into inheritance details
-     * @param {object} migrationData - Raw data from exportContractForMigration
-     * @returns {array} Array of processed inheritance details
-     */
-    processMigrationDataToInheritances: function(migrationData) {
-        const inheritancesList = [];
-
-        for (let i = 0; i < migrationData.inheritanceData.length; i++) {
-            const inheritance = migrationData.inheritanceData[i];
-            const inheritanceId = migrationData.inheritanceIds[i];
-
-            inheritancesList.push({
-                id: inheritanceId,
-                testatorEOA: inheritance.testatorEOA,
-                testatorSAA: inheritance.testatorSAA,
-                beneficiaryEOA: inheritance.beneficiaryEOA,
-                beneficiarySAA: inheritance.beneficiarySAA,
-                gracePeriod: inheritance.gracePeriod.toString(),
-                state: parseInt(inheritance.state),
-                stateName: STATE_NAMES[parseInt(inheritance.state)],
-                arweaveTransactionId: inheritance.arweaveTransactionId,
-                scheduledTransferTime: inheritance.scheduledTransferTime.toString()
-            });
-        }
-
-        return inheritancesList;
     }
 };
 
@@ -1085,7 +1003,7 @@ const testatorDataUtils = {
             const kemHash = crypto.createHash('sha256').update(encapsulatedKey).digest();
             const kemHashB64 = b64(kemHash);
             const wrapNonceB64 = b64(nonce);
-            const recV = externalRecipient.recV || 1;  // Fallback to version 1
+            const recV = externalRecipient.recV;
             const aad = Buffer.from(`recV=${recV}|kid=${externalRecipient.kid}|type=mlkem768|kem_hash=${kemHashB64}|nonce=${wrapNonceB64}`, 'utf8');
 
             const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, nonce);
