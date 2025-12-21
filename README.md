@@ -161,7 +161,7 @@ We encourage contributions, interoperability, and adoption of the dual-recipient
 
 ## Contact
 
-For support or questions, contact: [support@inheritor.app](mailto:info@inheritor.app)
+For support or questions, join our Telegram channel: [Inheritor Community](https://t.me/+Rq4MyoPkwdkzOThl)
 
 ---
 
