@@ -128,7 +128,7 @@ node scripts/Beneficiary_Claim.js
 
 ### 4. Recheck and decrypt
 
-- The claim check runs again, so a check-in, revocation or pause in the meantime stops the claim.
+- The claim check runs again, so a check-in, revocation or pause in the meantime stops the claim. Decryption must follow within 30 seconds of that check.
 - Your ML-KEM-768 key unwraps the content key, and the content key decrypts the asset. Envelope v2 authenticates the record the asset belongs to: the deployment, inheritance, testator, beneficiary and purpose. A payload copied from another record does not open.
 
 ## Configuration
@@ -145,7 +145,7 @@ The defaults work for most people. To change them, set these variables in your e
 | `INHERITOR_KEYS_DIR` | `keys/` | Folder with your key file |
 
 Notes on providers:
-- At least two providers of **different operators** must answer. Two URLs with the same name count as one.
+- At least two providers of **different operators** must answer. Two entries with the same name, or with hosts under the same domain (such as `eth.example.com` and `lb.example.com`), count as one.
 - An Arbitrum claim needs Ethereum providers too, because the registry is on Ethereum.
 - Your own provider URLs (Infura, Alchemy and so on) may contain an API key. The tool prints only the host.
 

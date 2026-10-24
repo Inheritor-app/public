@@ -111,6 +111,23 @@ test('a check-in between the key release and decryption stops the claim', async 
     await assert.rejects(run(fixture, { chain, workerDouble }), (error) => error.code === 'not_claimable');
 });
 
+test('a recheck older than the maximum context age is not used to decrypt', async () => {
+    const fixture = buildClaimFixture();
+    const { performance } = require('perf_hooks');
+    let reads = 0;
+    const chain = fixture.chain();
+    const readers = readersFor(chain);
+    const read = readers.ethereum.read.bind(readers.ethereum);
+    readers.ethereum.read = async (calls) => { reads++; return read(calls); };
+    await assert.rejects(claimInheritance({
+        config: fixture.config, network: 'ethereum', inheritanceId: fixture.inheritanceId, keys: fixture.keys, readers,
+        fetch: fixture.fetchDouble({ workerDouble: fixture.worker() }), log: () => {},
+        // The decryption happens 31 s after the recheck's reads started
+        clock: () => performance.now() + 31_000
+    }), (error) => error.code === 'context_expired');
+    assert.equal(reads, 4);
+});
+
 test('keys of another beneficiary are refused before anything is downloaded', async () => {
     const fixture = buildClaimFixture();
     const other = buildClaimFixture();

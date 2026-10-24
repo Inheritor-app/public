@@ -90,7 +90,7 @@ function buildClaimFixture({ plaintext = Buffer.from('the last will, throwaway t
     /** A fetch double routing the key provider and Arweave gateways. */
     function fetchDouble({ workerDouble, gateways = { 'https://arweave.test': arweaveJson } }) {
         return async (url, init = {}) => {
-            const text = (status, body, headers = {}) => ({ status, headers: new Map(Object.entries(headers)), text: async () => body });
+            const text = (status, body, headers = {}) => new Response(body, { status, headers });
             if (url === 'https://worker.test/v2/release') {
                 const reply = await workerDouble.handle(JSON.parse(init.body));
                 return text(reply.status, JSON.stringify(reply.body));

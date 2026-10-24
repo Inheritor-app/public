@@ -8,7 +8,7 @@
  * 2. Download the payload from Arweave and accept it only if it matches the on-chain payloadFingerprint.
  * 3. Request the wrapped key from the key provider with a signed v2 release request.
  * 4. Run the claim check again, so a check-in, revocation or pause during the download or the release stops the
- *    claim, and require the same record.
+ *    claim, and require the same record. Decryption must follow within MAX_CONTEXT_AGE_MS of that check's reads.
  * 5. Decrypt the asset under the envelope v2 context of the verified record, with purpose "asset".
  *
  * Nothing is decrypted unless every step passes.
@@ -16,10 +16,14 @@
  * This work has been dedicated to the public domain under the CC0 1.0 Universal Public Domain Dedication.
  */
 
+const { performance } = require('perf_hooks');
 const { readClaimContext, checkRecord, sameInheritance, ClaimDenial } = require('./claim-context');
 const { downloadVerifiedPayload } = require('./arweave');
 const { requestKeyRelease } = require('./key-release');
 const { parseEnvelope, decryptAsset } = require('./envelope-v2');
+
+// As in the app: a verified context is used only this long after its reads started
+const MAX_CONTEXT_AGE_MS = 30_000;
 
 /**
  * @param {object} options
@@ -30,9 +34,10 @@ const { parseEnvelope, decryptAsset } = require('./envelope-v2');
  * @param {{ethereum: object, arbitrum?: object}} options.readers Two-provider readers per chain
  * @param {Function} [options.fetch]
  * @param {Function} [options.log]
+ * @param {Function} [options.clock] Monotonic milliseconds, as performance.now()
  * @returns {Promise<{plaintext: Buffer, fileType: string|undefined, context: object}>}
  */
-async function claimInheritance({ config, network, inheritanceId, keys, readers, fetch = globalThis.fetch, log = console.log }) {
+async function claimInheritance({ config, network, inheritanceId, keys, readers, fetch = globalThis.fetch, log = console.log, clock = () => performance.now() }) {
     const id = inheritanceId.toLowerCase();
     const readContext = () => readClaimContext({ environment: config.environment, registry: config.registry, network, inheritanceId: id, readers });
 
@@ -74,6 +79,7 @@ async function claimInheritance({ config, network, inheritanceId, keys, readers,
     if (recheck.deploymentIdentity !== context.deploymentIdentity || !sameInheritance(recheck.latest.record, record)) {
         throw new ClaimDenial('record_changed');
     }
+    if (clock() - recheck.obtainedAt > MAX_CONTEXT_AGE_MS) throw new ClaimDenial('context_expired');
 
     log('Decrypting the asset...');
     const plaintext = decryptAsset(envelope, wrappedK, keys.quantum.privateKey, {
@@ -95,4 +101,4 @@ function safeFileName(inheritanceId, fileType) {
     return `inheritance_${inheritanceId.slice(2, 10).toLowerCase()}.${extension}`;
 }
 
-module.exports = { claimInheritance, safeFileName };
+module.exports = { MAX_CONTEXT_AGE_MS, claimInheritance, safeFileName };

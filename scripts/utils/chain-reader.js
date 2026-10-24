@@ -11,6 +11,8 @@
  *   requireCanonical (EIP-1898) and must return identical bytes on both.
  * - Block ages are judged against the providers' agreed HTTP Date, not the local clock.
  *
+ * - Providers count as independent only with different operator names and different sites (see operatorKeys).
+ *
  * Any disagreement fails closed. A provider that does not answer is replaced by the next operator.
  *
  * This work has been dedicated to the public domain under the CC0 1.0 Universal Public Domain Dedication.
@@ -65,6 +67,21 @@ function parseBlock(result) {
 }
 
 const sameBlock = (a, b) => a.number === b.number && a.hash === b.hash && a.timestamp === b.timestamp;
+
+/**
+ * Who a provider is, for the independence rule: its operator name and its site. The site is host:port for an IP
+ * address or localhost, and otherwise the last two labels of the host name, so two names for one endpoint, or two
+ * endpoints of one company's domain, count as one operator.
+ */
+function operatorKeys(provider) {
+    const name = `name:${String(provider.operator).trim().toLowerCase()}`;
+    if (!provider.host) return [name];
+    const host = String(provider.host).toLowerCase();
+    const hostname = host.replace(/:\d+$/, '');
+    const literal = /^[\d.]+$/.test(hostname) || hostname.startsWith('[') || hostname === 'localhost';
+    const site = literal ? host : hostname.split('.').slice(-2).join('.');
+    return [name, `site:${site}`];
+}
 
 /**
  * JSON-RPC over HTTPS (http only for loopback hosts, for local nodes and tests). Errors name the host only, so an
@@ -141,7 +158,8 @@ class TwoProviderReader {
         const chosen = [];
         const operators = new Set();
         for (let index = 0; index < this.providers.length; index++) {
-            if (excluded.has(index) || operators.has(this.providers[index].operator)) continue;
+            const keys = operatorKeys(this.providers[index]);
+            if (excluded.has(index) || keys.some((key) => operators.has(key))) continue;
             try {
                 const reply = await this.rpc(index, 'eth_chainId', []);
                 if (quantity(reply.result) !== this.chainId) {
@@ -149,7 +167,7 @@ class TwoProviderReader {
                     continue;
                 }
                 chosen.push(index);
-                operators.add(this.providers[index].operator);
+                keys.forEach((key) => operators.add(key));
                 if (chosen.length === this.policy.requiredProviders) return chosen;
             } catch (error) {
                 if (!(error instanceof ProviderFailure)) throw error;
@@ -165,17 +183,24 @@ class TwoProviderReader {
     async readFrom(calls, [a, b]) {
         const startedAt = performance.now();
         const finalized = await this.agreedFinalized(a, b);
-        const { block: latest, now } = await this.agreedLatest(a, b);
+        const { block: latest, now: agreedNow, agreedAt } = await this.agreedLatest(a, b);
         if (latest.number < finalized.number) {
             throw new ChainVerificationError('malformed_response', 'latest block is older than the finalized block');
         }
-        this.checkAge(finalized, now, this.policy.maxFinalizedBlockAgeSec, 'finalized');
-        this.checkAge(latest, now, this.policy.maxLatestBlockAgeSec, 'latest');
+        // The providers' agreed time, advanced by the time elapsed since it was read
+        const now = () => agreedNow + (performance.now() - agreedAt) / 1000;
+        const checkAges = () => {
+            this.checkAge(finalized, now(), this.policy.maxFinalizedBlockAgeSec, 'finalized');
+            this.checkAge(latest, now(), this.policy.maxLatestBlockAgeSec, 'latest');
+        };
+        checkAges();
 
         const [finalizedResults, latestResults] = await Promise.all([
             this.agreedCalls(calls, finalized, a, b),
             this.agreedCalls(calls, latest, a, b)
         ]);
+        // Slow answers must not stretch the freshness limits: the blocks must still be fresh now
+        checkAges();
         return {
             finalized: { block: finalized, results: finalizedResults },
             latest: { block: latest, results: latestResults },
@@ -202,11 +227,12 @@ class TwoProviderReader {
     async agreedLatest(a, b) {
         const [headA, headB] = await Promise.all([this.block(a, 'latest'), this.block(b, 'latest')]);
         const now = this.agreedTime(headA.date, headB.date);
+        const agreedAt = performance.now();
         if (headA.block.number === headB.block.number) {
             if (!sameBlock(headA.block, headB.block)) {
                 throw new ChainVerificationError('providers_disagree', 'providers disagree on the latest block');
             }
-            return { block: headA.block, now };
+            return { block: headA.block, now, agreedAt };
         }
         const [lagging, head] = headA.block.number > headB.block.number ? [b, headA.block] : [a, headB.block];
         for (let attempt = 1; attempt <= this.policy.headAttempts; attempt++) {
@@ -215,7 +241,7 @@ class TwoProviderReader {
                 if (!sameBlock(confirmed, head)) {
                     throw new ChainVerificationError('providers_disagree', 'providers disagree on the latest block');
                 }
-                return { block: head, now };
+                return { block: head, now, agreedAt };
             }
             if (attempt < this.policy.headAttempts) await sleep(this.policy.retryDelayMs);
         }
@@ -327,6 +353,7 @@ function parseProviderList(text) {
 
 module.exports = {
     DEFAULT_POLICY,
+    operatorKeys,
     TwoProviderReader,
     ChainVerificationError,
     httpTransport,

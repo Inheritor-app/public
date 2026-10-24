@@ -109,8 +109,9 @@ class MockChain {
     }
 
     /**
-     * A provider transport on this chain. `view` may override heads, chainId or state, `tamper(method, params, result)`
-     * may rewrite answers, and `fail` makes every request fail like an unreachable host.
+     * A provider transport on this chain. `view` may override heads, chainId, state or host, `tamper(method, params,
+     * result)` may rewrite answers, `delayMs` delays answers per method, and `fail` makes every request fail like an
+     * unreachable host.
      */
     provider(operator, view = {}) {
         const chain = this;
@@ -118,11 +119,13 @@ class MockChain {
         return {
             operator,
             requests,
-            host: `${operator.toLowerCase().replace(/\W+/g, '-')}.test`,
+            host: view.host ?? `${operator.toLowerCase().replace(/\W+/g, '-')}.test`,
             async post(body) {
                 const request = JSON.parse(body);
                 requests.push(request);
                 if (view.fail) throw Object.assign(new Error('connection refused'), { unavailable: true });
+                const delay = view.delayMs && view.delayMs[request.method];
+                if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
                 const reply = { jsonrpc: '2.0', id: request.id };
                 try {
                     let result = chain.handle(request.method, request.params, view);

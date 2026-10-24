@@ -135,7 +135,7 @@ Nothing is decrypted unless every step passes:
 4. **Two providers.** Every read comes from two providers of different operators. They must agree on each block and on every result, byte for byte. Each call is pinned to the block hash. Block ages are checked against the providers' own clocks. Any disagreement stops the claim.
 5. **Payload.** The payload downloaded from Arweave must match the record's `payloadFingerprint`. A gateway that serves anything else is skipped.
 6. **Key release.** The key provider releases the wrapped key on an EIP-712 release request signed with your beneficiary key, once it sees the record Claimable at both blocks.
-7. **Recheck and decrypt.** The record is verified again, then the asset is decrypted. Envelope v2 authenticates the deployment, inheritance, testator, beneficiary and purpose, so a payload copied from another record does not open.
+7. **Recheck and decrypt.** The record is verified again, and the asset is decrypted within 30 seconds of that check. Envelope v2 authenticates the deployment, inheritance, testator, beneficiary and purpose, so a payload copied from another record does not open.
 
 A newly Claimable inheritance can be claimed once its block is finalized, about 15–20 minutes after it became Claimable.
 
@@ -152,7 +152,7 @@ The beneficiary tools read these optional variables from the environment or from
 | `INHERITOR_ARWEAVE_GATEWAYS` | `https://arweave.net,https://ar-io.net` | Arweave gateways, tried in order. |
 | `INHERITOR_KEYS_DIR` | `./keys` | Directory with your exported key file. |
 
-At least two providers of **different operators** must answer; extra providers replace ones that do not. Every claim reads Ethereum, because the registry is there. Provider URLs may contain API keys: the tools print only the host. The registry address is not configurable, because it is the trust anchor that names the contract.
+At least two providers of **different operators** must answer: different names and different domains (two hosts under one domain count as one operator). Extra providers replace ones that do not. Every claim reads Ethereum, because the registry is there. Provider URLs may contain API keys: the tools print only the host. The registry address is not configurable, because it is the trust anchor that names the contract.
 
 ## Tests
 

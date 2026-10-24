@@ -92,6 +92,34 @@ test('two providers of the same operator do not count as two', async () => {
     );
 });
 
+test('two labels for the same endpoint or site do not count as two operators', async () => {
+    const c = chain();
+    await assert.rejects(
+        reader([c.provider('Operator A', { host: 'rpc.example.org' }), c.provider('Operator B', { host: 'rpc.example.org' })]).read([lookup]),
+        (error) => error.code === 'not_enough_providers'
+    );
+    await assert.rejects(
+        reader([c.provider('Operator A', { host: 'eth.example.org' }), c.provider('Operator B', { host: 'lb.EXAMPLE.org' })]).read([lookup]),
+        (error) => error.code === 'not_enough_providers'
+    );
+    await assert.rejects(
+        reader([c.provider('Operator A'), c.provider(' operator a ')]).read([lookup]),
+        (error) => error.code === 'not_enough_providers'
+    );
+    // Loopback endpoints differ by port
+    const reads = await reader([c.provider('A', { host: '127.0.0.1:8545' }), c.provider('B', { host: '127.0.0.1:8546' })]).read([lookup]);
+    assert.deepEqual(reads.providers, ['A', 'B']);
+});
+
+test('block ages are checked again after slow answers, against the elapsed time', async () => {
+    const c = chain({ latestAge: 2 });
+    const slow = c.provider('B', { delayMs: { eth_call: 1500 } });
+    await assert.rejects(
+        reader([c.provider('A'), slow], { maxLatestBlockAgeSec: 3 }).read([lookup]),
+        (error) => error.code === 'stale_block'
+    );
+});
+
 test('a provider on the wrong chain or that does not answer is skipped', async () => {
     const c = chain();
     const reads = await reader([
