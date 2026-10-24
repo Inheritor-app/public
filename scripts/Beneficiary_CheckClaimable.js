@@ -15,27 +15,33 @@
  * and verify if they are claimable. It provides functions to:
  * 1. View all inheritances designated to a beneficiary
  * 2. Check if specific inheritances are claimable
- * 3. Refund remaining ETH from the beneficiary wallet to the gas wallet
+ * 3. Fund the beneficiary wallet from the gas wallet
+ * 4. Refund remaining ETH from the beneficiary wallet to the gas wallet
+ *
+ * Inheritances are read from Inheritor contract v3 through the address registry, verified by two independent
+ * providers at the finalized and the latest block (see scripts/utils/claim-context.js). Only the isClaimable
+ * transaction and the wallet functions use the single RPC provider chosen at startup.
  */
 
 require('dotenv').config();
 const { ethers } = require('ethers');
 const readline = require('readline');
 const {
-    NETWORK_CONSTANTS,
     NETWORK_CONFIGS,
     INHERITANCE_STATES,
     STATE_NAMES,
     GAS_CONSTANTS,
     CONTRACT_ABIS,
-    formatters,
-    contractUtils,
     networkUtils,
-    errorHandlers,
     keyUtils,
-    walletUtils,
-    testatorDataUtils
+    walletUtils
 } = require('./utils/shared-utils');
+const { loadClaimConfig, buildReaders, describeProviders } = require('./utils/claim-config');
+const { readClaimContext, readBeneficiaryRecords, checkRecord } = require('./utils/claim-context');
+const { decryptMetadata } = require('./utils/envelope-v2');
+
+// Gas limit for isClaimable when estimation fails
+const FALLBACK_GAS_LIMIT = 300000n;
 
 // =============================================================================
 // Configuration Constants (now imported from shared-utils)
@@ -63,10 +69,6 @@ function question(query) {
 // Beneficiary key loading function now uses shared utility
 const loadBeneficiaryKeysFromFile = keyUtils.loadBeneficiaryKeysFromFile;
 
-// Formatting function now uses shared utility
-const formatTimestamp = formatters.formatTimestamp;
-
-
 // =============================================================================
 // Blockchain & Network Functions
 // =============================================================================
@@ -74,78 +76,33 @@ const formatTimestamp = formatters.formatTimestamp;
 // Provider setup function now uses shared utility
 const setupProvider = (networkConfig) => networkUtils.setupProvider(networkConfig, question);
 
-// Contract address functions now use shared utilities
-const getContractAddressFromProxy = networkUtils.getContractAddressFromProxy;
-
-// Contract address for network function now uses shared utility
-const getContractAddressForNetwork = (provider, networkConfig) =>
-  networkUtils.getContractAddressForNetwork(provider, networkConfig, question);
-
 // =============================================================================
 // Inheritance Query Functions
 // =============================================================================
 
 /**
- * Get inheritance details from the contract
- * @param {ethers.Contract} contract Inheritor contract instance
- * @param {string} inheritanceId The inheritance ID to query
- * @returns {Promise<Object>} The inheritance details
- */
-async function getInheritanceDetails(contract, inheritanceId) {
-  const inheritance = await contract.inheritances(inheritanceId);
-  return {
-    id: inheritanceId,
-    testatorEOA: inheritance.testatorEOA,
-    testatorSAA: inheritance.testatorSAA,
-    beneficiaryEOA: inheritance.beneficiaryEOA,
-    beneficiarySAA: inheritance.beneficiarySAA,
-    gracePeriod: inheritance.gracePeriod.toString(),
-    state: parseInt(inheritance.state),
-    stateName: STATE_NAMES[parseInt(inheritance.state)],
-    arweaveTransactionId: inheritance.arweaveTransactionId,
-    scheduledTransferTime: inheritance.scheduledTransferTime.toString(),
-    encryptedTestatorData: inheritance.encryptedTestatorData
-  };
-}
-
-/**
- * Find inheritances for a beneficiary using the contract's beneficiaryInheritances mapping
- * @param {ethers.Contract} contract Inheritor contract
- * @param {string} beneficiaryAddress Ethereum address of the beneficiary
- * @returns {Promise<Array<string>>} Array of inheritance IDs
- */
-async function fetchBeneficiaryInheritances(contract, beneficiaryAddress) {
-  console.log(`\nFetching inheritances for ${beneficiaryAddress} from contract...`);
-
-  try {
-    // Call the getBeneficiaryInheritances function
-    const inheritanceIds = await contract.getBeneficiaryInheritances(beneficiaryAddress);
-
-    return inheritanceIds;
-  } catch (error) {
-    console.error(`Error fetching inheritances from contract: ${error.message}`);
-    throw error;
-  }
-}
-
-/**
- * Display all inheritances for a beneficiary - Optimized with exportContractForMigration
- * @param {ethers.Contract} contract - Inheritor contract instance
+ * Display all inheritances for a beneficiary, read from the verified contract. The testator's name and message are
+ * decrypted only from these verified records, under the envelope v2 metadata context.
+ * @param {Object} claim - { config, network, readers }
  * @param {string} beneficiaryAddress - Ethereum address of the beneficiary (0x...)
  */
-async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
-
+async function displayBeneficiaryInheritances(claim, beneficiaryAddress) {
   try {
-    // Fetch inheritance IDs from the contract
-    const inheritanceIds = await fetchBeneficiaryInheritances(contract, beneficiaryAddress);
+    console.log(`\nFetching inheritances for ${beneficiaryAddress} (verified by two providers)...`);
+    const listing = await readBeneficiaryRecords({
+      environment: claim.config.environment,
+      registry: claim.config.registry,
+      network: claim.network,
+      beneficiary: beneficiaryAddress,
+      readers: claim.readers
+    });
+    console.log(`Contract ${listing.contractAddress} (version ${listing.version})`);
 
-    if (inheritanceIds.length === 0) {
+    if (listing.records.length === 0) {
       console.log('No inheritances found for this beneficiary.');
       await question('\nPress Enter to return to the main menu...');
       return;
     }
-
-    console.log('Fetching details...');
 
     // Load beneficiary quantum keys for testatorData decryption
     let quantumKeys = null;
@@ -155,82 +112,46 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
       console.log('Note: Quantum keys not found. TestatorData will not be decrypted.');
     }
 
-    // Fetch details for each inheritance
-    const inheritances = [];
-    for (const inheritanceId of inheritanceIds) {
-      try {
-        const details = await getInheritanceDetails(contract, inheritanceId);
-        inheritances.push(details);
-      } catch (error) {
-        console.log(`Error fetching details for inheritance ${inheritanceId}: ${error.message}`);
-      }
-    }
-
     console.log('\n=== Your Inheritances ===');
     let index = 1;
 
-    for (const inheritance of inheritances) {
-      // Only display if not revoked (convert BigInt to Number for comparison)
-      if (Number(inheritance.state) !== INHERITANCE_STATES.REVOKED) {
-        console.log(`\n${index}. Inheritance ID: ${inheritance.id}`);
-
-        // Try to decrypt and display testator name and message
-        let testatorName = null;
-        let testatorMessage = null;
-        let decryptionSucceeded = false;
-        if (quantumKeys && inheritance.encryptedTestatorData) {
-          try {
-            if (!inheritance.encryptedTestatorData || inheritance.encryptedTestatorData.length < 10) {
-              // Empty or malformed data - skip decryption
-            } else {
-              const decryptedData = testatorDataUtils.decryptTestatorData(
-                inheritance.encryptedTestatorData,
-                quantumKeys.privateKey
-              );
-              testatorName = decryptedData.name;
-              testatorMessage = decryptedData.message;
-              decryptionSucceeded = true;
-            }
-          } catch (error) {
-            // Check if it's because of missing ML-KEM recipient (iOS-only encryption)
-            if (error.message.includes('External ML-KEM recipient not found')) {
-              console.log(`   [Note] This inheritance was created for iOS-only decryption`);
-            } else if (error.message.includes('Unsupported state or unable to authenticate data')) {
-              console.log(`   [Note] Decryption failed - this may be encrypted for a different beneficiary`);
-            }
-          }
-        }
-
-        // Display testator info
-        if (testatorName) {
-          console.log(`   Testator: ${testatorName} (${inheritance.testatorEOA})`);
-        } else {
-          console.log(`   Testator: ${inheritance.testatorEOA}`);
-        }
-
-        // Display message - only if decryption succeeded
-        if (decryptionSucceeded) {
-          if (testatorMessage && testatorMessage.trim() !== '') {
-            console.log(`   Message: "${testatorMessage}"`);
-          } else {
-            console.log(`   Message: none`);
-          }
-        }
-
-        console.log(`   State: ${inheritance.stateName}`);
-
-        // Only show scheduled transfer time if set
-        if (BigInt(inheritance.scheduledTransferTime) > 0n) {
-          console.log(`   Scheduled Transfer: ${formatTimestamp(inheritance.scheduledTransferTime)}`);
-        }
-
-        index++;
+    for (const inheritance of listing.records) {
+      // Revoked inheritances are not shown
+      if (inheritance.state === INHERITANCE_STATES.REVOKED) {
+        continue;
       }
+      console.log(`\n${index}. Inheritance ID: ${inheritance.inheritanceId}`);
+
+      // Try to decrypt and display testator name and message
+      let metadata = null;
+      if (quantumKeys && inheritance.testatorData && inheritance.testatorData.length >= 10) {
+        try {
+          metadata = decryptMetadata(inheritance.testatorData, quantumKeys.privateKey, {
+            deploymentIdentity: listing.deploymentIdentity,
+            inheritanceId: inheritance.inheritanceId,
+            testator: inheritance.testatorEOA,
+            beneficiary: inheritance.beneficiaryEOA,
+            purpose: 'metadata'
+          });
+        } catch (error) {
+          console.log(`   [Note] Testator name and message could not be decrypted: ${error.message}`);
+        }
+      }
+
+      if (metadata && metadata.name) {
+        console.log(`   Testator: ${metadata.name} (${inheritance.testatorEOA})`);
+      } else {
+        console.log(`   Testator: ${inheritance.testatorEOA}`);
+      }
+      if (metadata) {
+        const message = typeof metadata.message === 'string' ? metadata.message.trim() : '';
+        console.log(`   Message: ${message ? `"${message}"` : 'none'}`);
+      }
+      console.log(`   State: ${STATE_NAMES[inheritance.state]}`);
+      index++;
     }
 
-    // Wait for user acknowledgment
     await question('\nPress Enter to return to the main menu...');
-
   } catch (error) {
     console.error(`Error displaying inheritances: ${error.message}`);
     await question('\nPress Enter to return to the main menu...');
@@ -241,86 +162,77 @@ async function displayBeneficiaryInheritances(contract, beneficiaryAddress) {
 // Core Check Functions
 // =============================================================================
 
+/** Reads the verified claim context and prints the record at both blocks. */
+async function readAndShowContext(claim, inheritanceId) {
+  const context = await readClaimContext({
+    environment: claim.config.environment,
+    registry: claim.config.registry,
+    network: claim.network,
+    inheritanceId,
+    readers: claim.readers
+  });
+  const record = context.latest.record;
+  console.log('\n=== Inheritance Details (verified) ===');
+  console.log(`ID: ${inheritanceId}`);
+  console.log(`Contract: ${context.contractAddress} (version ${context.latest.version})`);
+  console.log(`Providers: ${context.providers.join(', ')}`);
+  console.log(`State at the latest block (${context.latest.block.number}): ${STATE_NAMES[record.state]}`);
+  console.log(`State at the finalized block (${context.finalized.block.number}): ${STATE_NAMES[context.finalized.record.state]}`);
+  console.log(`Contract paused: ${context.latest.paused || context.finalized.paused ? 'yes' : 'no'}`);
+  console.log(`Testator EOA: ${record.testatorEOA}`);
+  console.log(`Beneficiary EOA: ${record.beneficiaryEOA}`);
+  return context;
+}
+
 /**
- * Check if an inheritance is claimable by the beneficiary
- * This function verifies claimability and can update the contract state
+ * Check if an inheritance is claimable by the beneficiary. If it is still Designated, offers to send the
+ * isClaimable transaction, which makes it Claimable once the testator's deadline (and any verification) has passed.
  *
- * @param {ethers.Contract} contract - Inheritor contract instance
+ * @param {Object} claim - { config, network, readers }
  * @param {Object} beneficiaryKeys - Object containing {address: string, privateKey: string, publicKey: string}
  * @param {string} inheritanceId - The inheritance ID to check (0x... format)
- * @param {ethers.Wallet} signer - Gas wallet signer for funding operations
- * @param {ethers.Provider} provider - Network provider (JsonRpcProvider)
- * @param {string} contractAddress - Contract address (0x...)
+ * @param {ethers.Provider} provider - Network provider for the transaction (JsonRpcProvider)
  */
-async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritanceId, signer, provider, contractAddress) {
+async function checkInheritanceClaimability(claim, beneficiaryKeys, inheritanceId, provider) {
   try {
-    // First, check if the inheritance exists and the user is the beneficiary
     console.log(`\nChecking inheritance ${inheritanceId}...`);
+    const context = await readAndShowContext(claim, inheritanceId);
+    const record = context.latest.record;
 
-    const inheritanceDetails = await getInheritanceDetails(contract, inheritanceId);
-    console.log('\n=== Inheritance Details ===');
-    console.log(`ID: ${inheritanceId}`);
-    console.log(`Current State: ${inheritanceDetails.stateName}`);
-    console.log(`Testator EOA: ${inheritanceDetails.testatorEOA}`);
-    console.log(`Beneficiary EOA: ${inheritanceDetails.beneficiaryEOA}`);
-
-    // Check if the user is the beneficiary
-    if (inheritanceDetails.beneficiaryEOA.toLowerCase() !== beneficiaryKeys.address.toLowerCase()) {
-      console.log('\n⚠️ WARNING: You are not the beneficiary of this inheritance!');
-      console.log(`Expected beneficiary: ${inheritanceDetails.beneficiaryEOA}`);
-      console.log(`Your address: ${beneficiaryKeys.address}`);
-      const continueAnyway = await question('\nContinue anyway? (yes/no): ');
-      if (continueAnyway.toLowerCase() !== 'yes') {
+    try {
+      checkRecord(context, beneficiaryKeys.address);
+      console.log('\n✅ This inheritance is CLAIMABLE at the finalized and the latest block.');
+      console.log('   Run Beneficiary_Claim.js to claim it.');
+      return;
+    } catch (denial) {
+      if (denial.code !== 'not_claimable' || record.state !== INHERITANCE_STATES.DESIGNATED) {
+        console.log(`\n${denial.message}`);
         return;
       }
     }
 
-    // Create beneficiary wallet
+    // Designated: the isClaimable transaction may make it Claimable
     const beneficiaryWallet = new ethers.Wallet(beneficiaryKeys.privateKey, provider);
-
-    // Check beneficiary wallet balance
+    const beneficiaryContract = new ethers.Contract(context.contractAddress, CONTRACT_ABIS.INHERITOR_ABI, beneficiaryWallet);
     const beneficiaryBalance = await provider.getBalance(beneficiaryWallet.address);
     console.log(`\nBeneficiary wallet balance: ${ethers.formatEther(beneficiaryBalance)} ETH`);
-
-    // Create contract instance with beneficiary wallet
-    const beneficiaryContract = new ethers.Contract(contractAddress, CONTRACT_ABIS.INHERITOR_ABI, beneficiaryWallet);
-
-    // Check if current state is already claimable
-    if (inheritanceDetails.state === INHERITANCE_STATES.CLAIMABLE) {
-      console.log('\n✅ This inheritance is already CLAIMABLE!');
-      return;
-    } else if (inheritanceDetails.state === INHERITANCE_STATES.CLAIMED) {
-      console.log('\n🔵 This inheritance has already been CLAIMED!');
-      return;
-    } else if (inheritanceDetails.state === INHERITANCE_STATES.REVOKED) {
-      console.log('\n🛑 This inheritance has been REVOKED by the testator.');
-      return;
-    } else if (inheritanceDetails.state === INHERITANCE_STATES.PURGED) {
-      console.log('\n⚪ This inheritance has been PURGED from the system.');
-      return;
-    }
 
     // Estimate gas for isClaimable call
     console.log('\nEstimating gas for isClaimable call...');
     let estimatedGas;
     try {
       estimatedGas = await beneficiaryContract.isClaimable.estimateGas(inheritanceId);
-      // Add buffer
       estimatedGas = BigInt(Math.floor(Number(estimatedGas) * GAS_CONSTANTS.SAFETY_MULTIPLIER));
     } catch (error) {
       console.log(`Could not estimate gas: ${error.message}`);
-      estimatedGas = BigInt(GAS_CONSTANTS.FALLBACK_GAS_LIMIT); // Fallback gas limit
+      estimatedGas = FALLBACK_GAS_LIMIT;
       console.log(`Using fallback gas limit of ${estimatedGas}`);
     }
 
-    // Get current gas price
     const feeData = await provider.getFeeData();
-    const gasPrice = feeData.gasPrice;
-    const gasCost = gasPrice * estimatedGas;
-
+    const gasCost = feeData.gasPrice * estimatedGas;
     console.log(`Estimated gas cost: ${ethers.formatEther(gasCost)} ETH`);
 
-    // Check if beneficiary has sufficient funds
     if (beneficiaryBalance < gasCost) {
       console.log(`\n⚠️ Insufficient funds for transaction.`);
       console.log(`Required: ${ethers.formatEther(gasCost)} ETH`);
@@ -329,53 +241,36 @@ async function checkInheritanceClaimability(contract, beneficiaryKeys, inheritan
       return;
     }
 
-    // Now call isClaimable
+    const send = await question('\nSend the isClaimable transaction now? (yes/no): ');
+    if (send.toLowerCase() !== 'yes') {
+      return;
+    }
+
     console.log('\nChecking if inheritance is claimable...');
-    const isClaimableResult = await beneficiaryContract.isClaimable(inheritanceId, {
-      gasLimit: estimatedGas
-    });
+    const tx = await beneficiaryContract.isClaimable(inheritanceId, { gasLimit: estimatedGas });
+    console.log(`Transaction sent: ${tx.hash}. Waiting for confirmation...`);
+    await tx.wait();
 
-    console.log(`Transaction sent. Waiting for confirmation...`);
-
-    // Wait for transaction to be mined
-    // isClaimable returns a boolean but also may update the contract state
-    // so we need to wait for confirmation
-    await isClaimableResult.wait();
-
-    // Get updated inheritance details
     console.log('\nRetrieving updated inheritance state...');
-    const updatedDetails = await getInheritanceDetails(contract, inheritanceId);
+    const updated = await readAndShowContext(claim, inheritanceId);
+    const latestState = updated.latest.record.state;
 
-    console.log('\n=== Updated Inheritance State ===');
-    console.log(`Current State: ${updatedDetails.stateName}`);
-
-    if (updatedDetails.state === INHERITANCE_STATES.CLAIMABLE) {
-      console.log('\n✅ RESULT: This inheritance is now CLAIMABLE!');
+    if (latestState === INHERITANCE_STATES.CLAIMABLE) {
+      console.log('\n✅ RESULT: This inheritance is now CLAIMABLE at the latest block.');
+      console.log('   It can be claimed once that block is finalized, in about 15–20 minutes.');
     } else {
       console.log('\n❌ RESULT: This inheritance is NOT YET CLAIMABLE.');
       console.log('Possible reasons:');
-
-      // Check if testator has a verifier configured
-      let hasVerifier = false;
-      try {
-        const verifierAddress = await contract.testatorVerifier(updatedDetails.testatorEOA);
-        hasVerifier = verifierAddress !== ethers.ZeroAddress;
-      } catch (error) {
-        console.log('Could not check verifier status');
-      }
-
       console.log('- The testator has recently checked in');
       console.log('- The grace period has not expired');
-      if (hasVerifier) {
+      const verifier = await beneficiaryContract.testatorVerifier(record.testatorEOA).catch(() => ethers.ZeroAddress);
+      if (verifier !== ethers.ZeroAddress) {
         console.log('- Verification is required but not completed');
       }
     }
-
   } catch (error) {
     if (error.message.includes('insufficient funds')) {
       console.error(`\n⚠️ ERROR: Operation cancelled due to insufficient funds.`);
-    } else if (error.message.includes('Fund transfer failed')) {
-      console.error(`\n⚠️ ERROR: Unable to transfer funds to beneficiary wallet.`);
     } else {
       console.error(`\n⚠️ ERROR: ${error.message}`);
     }
@@ -452,20 +347,17 @@ async function main() {
       : NETWORK_CONFIGS.arbitrum;
     console.log(`Selected network: ${networkConfig.name}`);
 
-    // Set up provider
+    // Verified reads for the claim check, through two independent providers
+    const config = loadClaimConfig();
+    const network = networkChoice === '1' ? 'ethereum' : 'arbitrum';
+    const claim = { config, network, readers: buildReaders(config) };
+    console.log(`Environment: ${config.environment}`);
+    console.log(`Verified reads via: ${describeProviders(config.providers[network])}`);
+
+    // Single provider for transactions (isClaimable, funding, refunds)
+    console.log('\nThe provider below is used only to send transactions.');
     const provider = await setupProvider(networkConfig);
     const signer = new ethers.Wallet(gasWalletKey, provider);
-
-    // Get contract address
-    const contractAddress = await getContractAddressForNetwork(provider, networkConfig);
-
-    // Create contract instance
-    console.log(`Using Inheritor contract at address: ${contractAddress}`);
-    const code = await provider.getCode(contractAddress);
-    if (code === '0x') {
-      throw new Error(`No contract found at address ${contractAddress}`);
-    }
-    const contract = new ethers.Contract(contractAddress, CONTRACT_ABIS.INHERITOR_ABI, signer);
 
     // Main menu loop
     let running = true;
@@ -483,7 +375,7 @@ async function main() {
       switch (action) {
         case '1':
           // Show received Inheritances
-          await displayBeneficiaryInheritances(contract, beneficiaryKeys.address);
+          await displayBeneficiaryInheritances(claim, beneficiaryKeys.address);
           break;
 
         case '2':
@@ -492,7 +384,7 @@ async function main() {
           if (!/^0x[a-fA-F0-9]{64}$/.test(inheritanceId)) {
             console.error('Invalid Inheritance ID format. Must be a 32-byte hex string with 0x prefix.');
           } else {
-            await checkInheritanceClaimability(contract, beneficiaryKeys, inheritanceId, signer, provider, contractAddress);
+            await checkInheritanceClaimability(claim, beneficiaryKeys, inheritanceId.toLowerCase(), provider);
           }
           break;
 

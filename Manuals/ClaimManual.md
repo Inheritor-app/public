@@ -1,55 +1,55 @@
 # Inheritor Beneficiary Claim Tool
 ## User Manual
 
+For Inheritor contract v3 and envelope v2.
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Before You Begin](#before-you-begin)
 3. [Installation](#installation)
 4. [Running the Tool](#running-the-tool)
-5. [Understanding Each Function](#understanding-each-function)
-6. [Technical Background](#technical-background)
-7. [Troubleshooting](#troubleshooting)
-8. [Security Considerations](#security-considerations)
-9. [Related Tools](#related-tools)
+5. [Understanding Each Step](#understanding-each-step)
+6. [Configuration](#configuration)
+7. [Technical Background](#technical-background)
+8. [Troubleshooting](#troubleshooting)
+9. [Security Considerations](#security-considerations)
+10. [Related Tools](#related-tools)
 
 ## Introduction
 
-The Inheritor Beneficiary Claim Tool is a quantum-safe implementation designed to allow beneficiaries to claim digital inheritances that have become available to them. This tool uses advanced post-quantum cryptography to ensure your inheritance remains secure even against future quantum computing threats.
+The Inheritor Beneficiary Claim Tool lets a beneficiary claim a digital inheritance without the iOS app. It uses post-quantum cryptography (ML-KEM-768), so the inheritance stays protected against future quantum computers.
 
-The tool implements a split-storage architecture combining blockchain, decentralized storage, and time-locked key services:
-- **Smart Contract**: Stores inheritance metadata on Ethereum/Arbitrum
-- **Arweave**: Stores encrypted asset data with quantum-safe encapsulated keys
-- **CloudFlare**: Provides time-locked symmetric key storage with signature authentication
+The tool combines three services:
+- **Smart contract (v3)** on Ethereum or Arbitrum: stores the inheritance record, its Arweave transaction ID and the fingerprint of the encrypted payload.
+- **Arweave**: stores the encrypted asset.
+- **Key provider**: releases your wrapped key once the inheritance is Claimable, on a request signed with your beneficiary key.
 
 With this tool, you can:
-- Verify if an inheritance is in the "Claimable" state
-- Retrieve encrypted asset data from Arweave using quantum-safe ML-KEM-768 cryptography
-- Fetch time-locked symmetric keys from CloudFlare with signature verification
-- Decrypt inherited digital assets using post-quantum cryptographic algorithms
-- Save the decrypted file to your local system
+- Verify, through two independent providers, that the inheritance is Claimable
+- Download the encrypted asset and check it against the fingerprint stored on-chain
+- Retrieve your wrapped key from the key provider
+- Decrypt the asset and save it to your computer
 
-This tool is intended for use when an inheritance has reached the "Claimable" state, allowing you to claim and access the inherited asset with quantum-resistant security.
+Nothing is decrypted unless every check passes. Claiming needs **no gas**: the tool only reads the blockchain.
 
-**Note**: This tool works alongside the Beneficiary Check Tool for verifying inheritance status.
+**Note**: If the inheritance is not Claimable yet, use the Beneficiary Check Tool first. It can send the `isClaimable` transaction that makes it Claimable.
 
 ## Before You Begin
 
 Before using this tool, you'll need:
 
-1. **Recovery Mnemonic**: Your 12 or 24-word recovery phrase for the beneficiary account
-2. **Gas Wallet Private Key**: A private key for a wallet containing ETH to pay for transaction fees
-3. **Quantum Private Keys**: Your ML-KEM-768 quantum-safe private keys (stored in InheritorKeys JSON file)
-4. **Inheritance ID**: The specific ID of the inheritance you want to claim
-5. **Network Information**: Knowledge of which network (Ethereum or Arbitrum) the inheritance is on
-6. **Internet Connection**: Access to the Ethereum or Arbitrum networks and external services (Arweave, CloudFlare)
+1. **Exported key file**: the `InheritorKeys_YYYY-MM-DD.json` file exported from the Inheritor iOS app. It holds your beneficiary Ethereum key and your ML-KEM-768 quantum-safe key.
+2. **Inheritance ID**: the ID of the inheritance you want to claim.
+3. **Network**: whether the inheritance is on Ethereum or Arbitrum.
+4. **Internet connection**: to reach the RPC providers, Arweave and the key provider.
 
-The inheritance must be in the "Claimable" state for successful retrieval. If you're unsure about the state of your inheritance, use the Inheritor Beneficiary Check Tool first.
+The inheritance must be **Claimable at both the finalized and the latest block**. A newly Claimable inheritance can be claimed about 15–20 minutes later, once its block is finalized.
 
 ## Installation
 
 ### Installing Node.js (Required)
 
-This tool requires Node.js, which is NOT included by default in macOS, Windows, or Linux systems. You'll need to install it first:
+This tool requires Node.js 18 or higher, which is NOT included by default in macOS, Windows, or Linux systems:
 
 #### macOS:
 1. Option 1: Download the installer from [Node.js website](https://nodejs.org/)
@@ -65,27 +65,27 @@ This tool requires Node.js, which is NOT included by default in macOS, Windows, 
 
 ### Setting Up the Tool
 
-Once Node.js is installed:
-
-1. Save the script as `Beneficiary_Claim.js`
-2. Open a terminal and navigate to the directory containing the script
-3. Install required dependencies:
+1. Download or clone this repository.
+2. Open a terminal in the repository folder and install the dependencies:
 
 ```bash
-npm install ethers bip39 @ethersproject/hdnode axios crypto secp256k1 @noble/post-quantum js-sha3
+npm install
 ```
 
-4. Make the script executable (macOS/Linux only):
+3. Place your exported `InheritorKeys_YYYY-MM-DD.json` file in the `keys/` folder. If there are several, the most recent one is used.
+4. Check that Node.js is installed correctly:
 
-```bash
-chmod +x Beneficiary_Claim.js
-```
-
-5. To verify Node.js is installed correctly, run:
 ```bash
 node --version
 ```
-This should display the Node.js version (should be 16.0.0 or higher)
+
+This should display v18.0.0 or higher.
+
+5. Optionally, run the test suite. It needs no network:
+
+```bash
+npm test
+```
 
 ## Running the Tool
 
@@ -95,245 +95,175 @@ To start the tool, run:
 node scripts/Beneficiary_Claim.js
 ```
 
-### Initial Setup Process
+### Steps
 
-1. **Enter Beneficiary Recovery Phrase**:
-   - Type your complete mnemonic with all words separated by spaces
-   - Example: `word1 word2 word3 ... word12`
-   - Press Enter after entering all words
-   - The script will display the derived address
+1. **Keys are loaded** from the `keys/` folder. The tool shows your beneficiary address.
+2. **Select network**: type `1` for Ethereum or `2` for Arbitrum.
+3. **Enter the inheritance ID**: the complete ID starting with `0x` (66 characters).
+4. **Wait**: the tool runs the checks below and prints each result.
+5. **File saved**: the decrypted file is saved in the current folder as `inheritance_<first 8 characters of the ID>.<extension>`. An existing file with that name is never overwritten.
 
-2. **Enter Gas Wallet Private Key**:
-   - Type or paste the private key of your gas wallet (with 0x prefix)
-   - Example: `0x123abc...`
-   - This wallet must contain ETH for transaction fees
-   - The script will display the wallet address
+## Understanding Each Step
 
-3. **Select Network**:
-   - Type either `ethereum` or `arbitrum` (case insensitive)
-   - Press Enter to confirm
+### 1. Verified claim check
 
-4. **RPC Configuration**:
-   - Choose option `1` if you have your own RPC URL (Infura, Alchemy, etc.)
-   - Choose option `2` to use public endpoints
-   - If using option `1`, enter your complete RPC URL when prompted
+- **Registry.** The Inheritor address registry on Ethereum names the contract for your network. It must name the same contract at the finalized and the latest block.
+- **Version.** The contract must report major version 3. A newer contract shows "Please download the latest recovery tools"; an older one is refused.
+- **Record.** At both blocks:
+  - the contract is not paused;
+  - the record exists and names you as beneficiary;
+  - it is Claimable;
+  - it names the same testator, beneficiary and payload.
+- **Two providers.** Every read comes from two RPC providers run by different operators. They must agree on each block and on every result, and each call is pinned to the block's hash. The blocks must be recent, judged by the providers' own clocks. Any disagreement stops the claim.
 
-5. **Enter Inheritance ID**:
-   - Enter the complete inheritance ID starting with 0x
-   - Example: `0x1234abcd...`
-   - This must be a 32-byte hex string (66 characters including 0x prefix)
+### 2. Download and check the payload
 
-### User Interface Tips
+- The encrypted asset is downloaded from Arweave using the transaction ID in the record.
+- Its fingerprint must equal the `payloadFingerprint` stored on-chain. If a gateway serves anything else, the next gateway is tried; nothing is decrypted from a payload that does not match.
 
-- **Inheritance ID Format**: Always enter the complete ID with 0x prefix
-- **Waiting for Transactions**: Be patient during blockchain interactions
-- **File Handling**: The decrypted file will be saved in the current directory
-- **Confirmation**: Successful claim will show filename and file size
+### 3. Key release
 
-## Understanding Each Function
+- The claim check runs again first, so a check-in, revocation or pause during the download stops the claim before anything is signed.
+- The tool signs a release request (EIP-712, domain "Inheritor Key Provider", version 2) with your beneficiary key. The request names the deployment, the inheritance, you, the payload fingerprint and the current time.
+- The key provider checks the request and the chain itself, then returns your wrapped key. It only does so when the record is Claimable at both the finalized and the latest block.
 
-The claim process involves several sequential steps that are performed automatically:
+### 4. Recheck and decrypt
 
-### 1. Check Inheritance Claimability
+- The claim check runs again, so a check-in, revocation or pause in the meantime stops the claim. Decryption must follow within 30 seconds of that check.
+- Your ML-KEM-768 key unwraps the content key, and the content key decrypts the asset. If a gateway's copy does not open (the fingerprint does not cover the envelope's recipient data), the next gateway's copy is tried with the same key. Envelope v2 authenticates the record the asset belongs to: the deployment, inheritance, testator, beneficiary and purpose. A payload copied from another record does not open.
 
-This function verifies that the inheritance is available to claim.
+## Configuration
 
-- **Process**:
-  - Connects to the blockchain
-  - Retrieves the inheritance details
-  - Verifies the inheritance state is "Claimable"
-  - Confirms you are the intended beneficiary
+The defaults work for most people. To change them, set these variables in your environment or in a `.env` file in the repository folder:
 
-- **Important Notes**:
-  - Only inheritances in the "Claimable" state can be processed
-  - If the inheritance is in another state, the process will stop
-  - No blockchain transaction is required for this check
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `INHERITOR_ENVIRONMENT` | `production` | `production` or `test` |
+| `INHERITOR_ETHEREUM_RPCS` | four public providers | Ethereum providers: `Name=https://url,Name=https://url` |
+| `INHERITOR_ARBITRUM_RPCS` | four public providers | Arbitrum providers, same format |
+| `INHERITOR_KEY_PROVIDER_URL` | the environment's key provider | Key provider base URL |
+| `INHERITOR_ARWEAVE_GATEWAYS` | `https://arweave.net,https://ar-io.net` | Arweave gateways, tried in order |
+| `INHERITOR_KEYS_DIR` | `keys/` | Folder with your key file |
 
-- **When to Use**:
-  - As the first step in the claim process
-  - To verify an inheritance is ready to be claimed
+Notes on providers:
+- At least two providers of **different operators** must answer. Two entries with the same name, or with hosts under the same domain (such as `eth.example.com` and `lb.example.com`), count as one.
+- An Arbitrum claim needs Ethereum providers too, because the registry is on Ethereum.
+- Your own provider URLs (Infura, Alchemy and so on) may contain an API key. The tool prints only the host.
 
-### 2. Retrieve Arweave Transaction ID
+Example with your own providers:
 
-This function gets the storage location of your encrypted asset.
-
-- **Process**:
-  - Queries the smart contract for the Arweave transaction ID
-  - Converts the ID to the proper format for Arweave access
-
-- **Important Notes**:
-  - The transaction ID is stored on the blockchain
-  - This ID is a pointer to where your encrypted asset is stored
-  - This step doesn't require a blockchain transaction
-
-- **When to Use**:
-  - This is automatically performed after claimability is confirmed
-
-### 3. Decrypt Symmetric Key (Quantum-Safe)
-
-This function retrieves and decrypts the key needed to unlock your inheritance using post-quantum cryptography.
-
-- **Process**:
-  - Fetches the encrypted symmetric key from CloudFlare with signature authentication
-  - Performs ML-KEM-768 key decapsulation using your quantum private key
-  - Derives encryption keys using HKDF-SHA256 with specific parameters
-  - Decrypts the symmetric key using AES-256-GCM with Additional Authenticated Data (AAD)
-
-- **Important Notes**:
-  - Uses quantum-safe ML-KEM-768 cryptography to resist quantum computer attacks
-  - The symmetric key is encrypted for dual recipients (iOS app + external tools)
-  - Requires your ML-KEM-768 private key (2400 bytes) for decryption
-  - CloudFlare provides time-locked storage with Ethereum signature verification
-
-- **When to Use**:
-  - This is automatically performed after retrieving the Arweave ID
-
-### 4. Download and Decrypt Asset (Dual-Recipient Format)
-
-This function retrieves and decrypts your inherited digital asset using the dual-recipient encryption format.
-
-- **Process**:
-  - Downloads the ArweaveEncryptedData JSON from Arweave network
-  - Extracts encrypted asset data, nonce, authentication tag, and metadata
-  - Uses the decrypted symmetric key with AES-256-GCM decryption
-  - Applies dual-recipient Additional Authenticated Data (AAD) for verification
-  - Saves the decrypted file to the current directory with proper file extension
-
-- **Important Notes**:
-  - Assets are encrypted using dual-recipient format supporting both iOS and external tools
-  - Uses AES-256-GCM with AAD: `v=1|alg=AES-256-GCM|recipients=2`
-  - The filename is based on the inheritance ID with original file extension
-  - File metadata (type, size) is preserved from the original encryption
-  - This is the final step of the quantum-safe claim process
-
-- **When to Use**:
-  - This is automatically performed after the symmetric key is decrypted
+```
+INHERITOR_ETHEREUM_RPCS=Infura=https://mainnet.infura.io/v3/<key>,Alchemy=https://eth-mainnet.g.alchemy.com/v2/<key>
+```
 
 ## Technical Background
 
-### Understanding Key Terms
-
-#### Recovery Phrase (Mnemonic)
-- A series of 12-24 words that generates your private key
-- Must be entered with spaces between words
-- Extremely sensitive information - never share with anyone
-- In the Inheritor system, this recovers your beneficiary EOA address
+### Key Terms
 
 #### Inheritance ID
-- A unique 32-byte identifier for each inheritance
-- Always begins with "0x" followed by 64 hexadecimal characters
-- Used to track and access the inheritance on the blockchain
+- A unique 32-byte identifier for each inheritance: `0x` followed by 64 hexadecimal characters.
 
-#### Symmetric Key
-- Used to encrypt and decrypt the actual asset file
-- The same key is needed for both encryption and decryption
-- In Inheritor, this key is encrypted for the beneficiary's public key
+#### Finalized and latest block
+- The **latest** block is the newest one. Checking it makes a testator's check-in count within seconds.
+- The **finalized** block can no longer be reversed. Checking it keeps a chain reorganisation from undoing the deadline. It lags the latest block by about 15–20 minutes.
 
-#### Arweave Transaction ID
-- A unique identifier for content stored on the Arweave network
-- Points to where your encrypted inheritance is stored
-- Converted between different formats during the claim process
+#### Payload fingerprint
+- `keccak256(abi.encode("INHERITOR_PAYLOAD_FP_V1", nonce, ciphertext, tag))` over the encrypted asset's content fields.
+- Stored on-chain when the inheritance is created. It proves the downloaded file is the one the testator registered.
 
-#### EOA (Externally Owned Account)
-- A standard Ethereum address controlled by a private key
-- Derived from your recovery phrase
-- Used to identify you as the beneficiary
-- The script derives this from your mnemonic automatically
+#### Deployment identity
+- `keccak256(abi.encode("INHERITOR_DEPLOYMENT_V1", environment, chainId, contract))`.
+- Identifies one Inheritor deployment. It separates Ethereum from Arbitrum, production from test, and one contract from any other.
 
-#### ML-KEM-768 (Module Lattice Key Encapsulation Mechanism)
-- NIST-standardized post-quantum cryptographic algorithm
-- Provides security against both classical and quantum computer attacks
-- Uses 2400-byte private keys and 1184-byte public keys
-- Part of the X-Wing hybrid approach combining classical and quantum-safe methods
+#### Envelope v2
+- The encrypted file format. The asset is encrypted once with AES-256-GCM under a random content key, which is then wrapped separately for each recipient.
+- The asset encryption authenticates `keccak256(abi.encode("INHERITOR_ENVELOPE_V2", deploymentIdentity, inheritanceId, testator, beneficiary, purpose))`. The purpose is `asset` for the inherited file and `metadata` for the testator's name and message.
+- Only envelope version 2 is supported.
 
-#### Dual-Recipient Encryption
-- Encryption format supporting both iOS app and external command-line tools
-- Uses separate key derivation paths for each recipient type
-- Allows inheritance claiming from multiple device types securely
-- Maintains backward compatibility while adding quantum-safe features
+#### ML-KEM-768
+- The NIST-standardized post-quantum key encapsulation mechanism (formerly CRYSTALS-Kyber).
+- 2400-byte private keys and 1184-byte public keys. It protects your copy of the content key.
 
-#### Additional Authenticated Data (AAD)
-- Extra data included in AES-GCM encryption for authentication
-- Helps verify the integrity and context of encrypted data
-- Used to distinguish between different encryption purposes (key wrapping vs asset encryption)
-- Format: `v=1|alg=AES-256-GCM|recipients=2` for dual-recipient assets
+### Cryptographic Process
 
-### Quantum-Safe Cryptographic Process
-
-The decryption process involves multiple quantum-resistant cryptographic operations:
-
-1. **ML-KEM-768 Key Decapsulation**: Uses your quantum-safe private key (2400 bytes) to decapsulate the shared secret from the encapsulated key
-2. **HKDF-SHA256 Key Derivation**: Derives encryption keys using specific info strings: `wrap|v=1|kid=${kid}|alg=AES-256-GCM`
-3. **AES-256-GCM Symmetric Key Decryption**: Decrypts the wrapped symmetric key using Additional Authenticated Data (AAD): `v=1|kid=${kid}|type=mlkem768|purpose=wrap`
-4. **Dual-Recipient Asset Decryption**: Uses the symmetric key with dual-recipient AAD: `v=1|alg=AES-256-GCM|recipients=2`
-5. **Signature Verification**: CloudFlare verifies Ethereum signatures for time-locked key access
-
-This quantum-safe multi-layer approach ensures that only the intended beneficiary can access the inherited asset, even against future quantum computer attacks. The system uses NIST-standardized ML-KEM-768 (formerly CRYSTALS-Kyber) for post-quantum security.
+1. **ML-KEM-768 decapsulation**: your private key recovers a shared secret from the capsule in the envelope.
+2. **HKDF-SHA256**: derives the key-encryption key, with info `wrap|v=1|kid=<kid>|alg=AES-256-GCM`.
+3. **Key unwrap**: AES-256-GCM opens the wrapped content key from the key provider, with authenticated data `recV=1|kid=<kid>|type=mlkem768|kem_hash=<hash>|nonce=<nonce>`.
+4. **Asset decryption**: AES-256-GCM opens the asset with the envelope v2 authenticated data of this record.
 
 ### Inheritance States
 
-An inheritance can exist in one of these states:
-
-- **Designated** (Green): Not yet claimable, waiting for conditions to be met
-- **Claimable** (Yellow/Orange): Ready to be claimed by the beneficiary
-- **Claimed** (Blue): Already claimed by the beneficiary
-- **Revoked** (Red): Cancelled by the testator
-- **Purged** (Gray): Removed from the system
-
-Only inheritances in the "Claimable" state can be processed with this tool.
+- **Designated** (Green): not yet claimable, waiting for conditions to be met
+- **Claimable** (Yellow/Orange): ready to be claimed by the beneficiary
+- **Claimed** (Blue): already claimed by the beneficiary
+- **Revoked** (Red): cancelled by the testator
+- **Purged** (Gray): removed from the system
 
 ## Troubleshooting
 
-### Common Errors and Solutions
+#### "Claimable at the latest block but not yet at the finalized block"
+- **Cause**: the inheritance became Claimable recently.
+- **Solution**: try again in about 15–20 minutes.
 
-#### "Invalid mnemonic phrase"
-- **Cause**: Recovery phrase words are incorrect or misspelled
-- **Solution**: Double-check each word, ensure correct spacing, and try again
+#### "This inheritance is Designated, not Claimable"
+- **Cause**: the deadline has not passed, or nobody has sent the `isClaimable` transaction yet.
+- **Solution**: use the Beneficiary Check Tool (option 2) to check, and to send the transaction once the deadline has passed.
 
-#### "Invalid private key for gas wallet"
-- **Cause**: The private key format is incorrect
-- **Solution**: Ensure the key includes the "0x" prefix and contains 64 hexadecimal characters after the prefix
+#### "independent providers answered" or "providers disagree"
+- **Cause**: fewer than two independent providers were reachable, or they returned different answers.
+- **Solution**: try again later, or set your own providers (see [Configuration](#configuration)). If providers keep disagreeing, do not continue: one of them may be returning false data.
 
-#### "Connection failed"
-- **Cause**: RPC provider is unavailable or rate-limited
-- **Solution**: Try option 2 to use public endpoints, or use your own Infura/Alchemy key
+#### "the providers do not agree on the current time"
+- **Cause**: a provider sent no HTTP `Date` header, or its clock differs by more than 30 seconds from the other's.
+- **Solution**: use other providers.
 
-#### "Invalid Inheritance ID format"
-- **Cause**: The inheritance ID format is incorrect
-- **Solution**: Ensure the ID is a 32-byte hex string with 0x prefix (66 characters total)
+#### "block is ... s old"
+- **Cause**: a provider is behind the chain.
+- **Solution**: try again, or use other providers.
 
-#### "Inheritance is not in Claimable state"
-- **Cause**: The inheritance is not yet available to claim
-- **Solution**: Use the Beneficiary Check Tool to verify the state and potentially trigger state changes
+#### "newer Inheritor contract than this tool supports"
+- **Cause**: Inheritor has been upgraded.
+- **Solution**: download the latest version of these tools.
 
-#### "Server did not return encrypted symmetric key"
-- **Cause**: The CloudFlare service cannot find the key for this inheritance
-- **Solution**: Verify you're using the correct inheritance ID and network
+#### "maintenance"
+- **Cause**: the registry names no contract for this network, for example during an upgrade.
+- **Solution**: try again later.
 
-#### "Error during decryption"
-- **Cause**: Issue with the quantum-safe cryptographic operations
-- **Solution**:
-  - Verify you're using the correct beneficiary mnemonic
-  - Ensure your InheritorKeys file contains valid ML-KEM-768 quantum keys
-  - Check that the quantum private key is the full 2400-byte key, not a truncated version
+#### "The Inheritor contract is paused"
+- **Cause**: the contract's emergency pause is on.
+- **Solution**: claims are possible once it is resumed.
 
-#### "Failed to retrieve asset from Arweave"
-- **Cause**: Problem accessing the stored asset on Arweave
-- **Solution**: Check your internet connection and try again
+#### "The payload downloaded from Arweave does not match the fingerprint stored on-chain"
+- **Cause**: no gateway served the registered file.
+- **Solution**: try again later, or add another gateway with `INHERITOR_ARWEAVE_GATEWAYS`.
+
+#### Key provider errors
+- **"not see the inheritance as Claimable"**: the key provider checks the finalized block too. Try again in about 15–20 minutes.
+- **"rate limiting"**: wait for the time shown, then try again.
+- **"rejected the request signature or its timestamp"**: check that your computer's clock is correct.
+- **"has no key for this inheritance"**: check the inheritance ID, the network and `INHERITOR_ENVIRONMENT`.
+
+#### "The wrapped key does not open with your quantum key"
+- **Cause**: the key file is not the one of this inheritance's beneficiary.
+- **Solution**: use the key file exported from the device the inheritance was designated to. Check that the quantum private key is the full 2400-byte key.
+
+#### "Your keys are not the beneficiary of this inheritance"
+- **Cause**: the key file belongs to another beneficiary address.
+- **Solution**: use the right key file.
 
 ### When to Seek Help
 
 If you encounter persistent errors not covered above, please:
-1. Take note of the exact error message
-2. Do not share your mnemonic or private keys with anyone
+1. Take note of the exact error message (set `DEBUG=1` to see the error code)
+2. Do not share your key file or private keys with anyone
 3. Contact official support channels
 
 ## Security Considerations
 
 - **Use on a Secure Device**: Run the tool on a private, secure computer
 - **Network Security**: Prefer a trusted network connection
-- **Protect Your Mnemonic**: Never share your recovery phrase
-- **Private Key Safety**: Your gas wallet private key is sensitive information
+- **Protect Your Key File**: It holds your beneficiary and quantum-safe private keys. Never share it.
+- **Providers**: The two-provider rule means one dishonest provider cannot make an inheritance look Claimable. Use providers you trust.
 - **Temporary Use**: This is a specialized tool, not for regular use
 - **File Storage**: Move claimed files to a secure location after decryption
 
@@ -345,8 +275,8 @@ The Inheritor CLI Tools suite includes three complementary command-line applicat
 2. **Beneficiary Check Tool**: For beneficiaries to monitor and check claimability of inheritances
 3. **Beneficiary Claim Tool** (this tool): For beneficiaries to claim and decrypt inherited digital assets
 
-If you're unsure whether your inheritance is claimable, use the Beneficiary Check Tool first before attempting to claim with this tool.
+If you're unsure whether your inheritance is claimable, use the Beneficiary Check Tool first.
 
 ---
 
-**Disclaimer**: This tool is provided for claiming inheritances only. While efforts have been made to ensure its security and accuracy, use it at your own risk. Always verify the effects of any blockchain transactions, as they cannot be reversed once confirmed.
+**Disclaimer**: This tool is provided for claiming inheritances only. While efforts have been made to ensure its security and accuracy, use it at your own risk.

@@ -178,11 +178,6 @@ async function viewDigitalWill(contract, testatorAddress) {
         console.log(`State: ${STATE_NAMES[state]}`);
         console.log(`Beneficiary: ${inheritance.beneficiaryEOA}`);
         console.log(`Grace Period: ${formatDuration(Number(inheritance.gracePeriod))}`);
-
-        const scheduledTransferTime = Number(inheritance.scheduledTransferTime);
-        if (scheduledTransferTime > 0) {
-          console.log(`Scheduled Transfer: ${formatTimestamp(scheduledTransferTime)}`);
-        }
       } catch (error) {
         console.log(`Error processing inheritance ${migrationData.inheritanceIds[i]}: ${error.message}`);
       }

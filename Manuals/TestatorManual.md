@@ -88,7 +88,7 @@ Note: Private key can be provided with or without the 0x prefix.
 ```bash
 node --version
 ```
-This should display the Node.js version (should be 16.0.0 or higher)
+This should display the Node.js version (should be 18.0.0 or higher)
 
 ## Running the Tool
 
@@ -159,7 +159,6 @@ This function fetches and displays all your inheritance information and check-in
   - Current state (color-coded for easy recognition)
   - Beneficiary addresses
   - Grace periods
-  - Scheduled transfers (if any)
 
 - **When to Use**:
   - To verify the current status of all your inheritances
