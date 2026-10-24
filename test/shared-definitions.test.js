@@ -27,6 +27,25 @@ test('payload fingerprint rejects every invalid shared vector on the named field
     }
 });
 
+test('payload fingerprint handles a multi-megabyte ciphertext', () => {
+    const { AbiCoder, keccak256 } = require('ethers');
+    const nonce = Buffer.alloc(12, 1);
+    const tag = Buffer.alloc(16, 2);
+    const ciphertext = Buffer.alloc(8 * 1024 * 1024 + 1, 3);
+    const envelope = { nonce: nonce.toString('base64'), tag: tag.toString('base64'), ciphertext: ciphertext.toString('base64') };
+    const expected = keccak256(AbiCoder.defaultAbiCoder().encode(['string', 'bytes12', 'bytes', 'bytes16'], ['INHERITOR_PAYLOAD_FP_V1', nonce, ciphertext, tag]));
+    assert.equal(payloadFingerprint(JSON.stringify(envelope)), expected);
+    // Still strict on large inputs
+    assert.throws(() => payloadFingerprint({ ...envelope, ciphertext: envelope.ciphertext.slice(0, -1) + '_' }), (error) => error.field === 'ciphertext');
+    assert.throws(() => payloadFingerprint({ ...envelope, ciphertext: '=' + envelope.ciphertext.slice(1) }), (error) => error.field === 'ciphertext');
+});
+
+test('standard base64 means padded, without base64url characters or misplaced padding', () => {
+    const { isStandardBase64 } = require('../scripts/utils/shared-definitions');
+    for (const ok of ['', 'QQ==', 'QUI=', 'QUJD', 'a+/b']) assert.equal(isStandardBase64(ok), true, ok);
+    for (const bad of ['QQ', 'QQ=', 'Q===', 'QQ==QUJD', 'ab-_', 'QU=D', ' QUJD', 'QUJD\n', 7, null]) assert.equal(isStandardBase64(bad), false, String(bad));
+});
+
 test('deployment identity reproduces every valid shared vector', () => {
     for (const vector of vectors.deploymentIdentity.valid) {
         assert.equal(deploymentIdentity(vector.input), vector.expected, vector.name);

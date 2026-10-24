@@ -19,7 +19,7 @@
 
 const crypto = require('crypto');
 const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
-const { envelopeAuthenticatedData, STANDARD_BASE64 } = require('./shared-definitions');
+const { envelopeAuthenticatedData, isStandardBase64 } = require('./shared-definitions');
 
 const ENVELOPE_VERSION = 2;
 const RECIPIENT_VERSION = 1;
@@ -29,7 +29,7 @@ const AES_GCM = 'AES-256-GCM';
 const b64 = (buf) => Buffer.from(buf).toString('base64');
 
 function fromB64(value, field) {
-    if (typeof value !== 'string' || !STANDARD_BASE64.test(value)) {
+    if (!isStandardBase64(value)) {
         throw new Error(`Envelope field ${field} is not standard base64`);
     }
     return Buffer.from(value, 'base64');

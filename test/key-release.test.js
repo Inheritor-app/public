@@ -39,13 +39,12 @@ test('a release request refuses a signing key that is not the beneficiary', asyn
     await assert.rejects(signReleaseRequest({ chainId: 1, ...vector.release }, other.privateKey), /beneficiary/);
 });
 
-function jsonResponse(status, body, headers = {}) {
-    return { status, headers: new Map(Object.entries(headers)), text: async () => JSON.stringify(body) };
-}
+/** A fresh response for every request. */
+const jsonResponse = (status, body, headers = {}) => () => new Response(JSON.stringify(body), { status, headers });
 
 const fetcher = (response, seen = []) => async (url, init) => {
     seen.push({ url, body: JSON.parse(init.body), method: init.method });
-    return response;
+    return response();
 };
 
 test('the released key is returned only for the requested identity and inheritance', async () => {
@@ -102,4 +101,6 @@ test('worker refusals surface their code, state and retry time', async () => {
         requestKeyRelease({ ...base, fetch: fetcher(jsonResponse(200, { encryptedSymmetricKey: 'not base64!', deploymentIdentity: base.deploymentIdentity, inheritanceId: base.inheritanceId })) }),
         (error) => error.code === 'malformed_response'
     );
+    const huge = { encryptedSymmetricKey: 'QUJD'.repeat(50_000), deploymentIdentity: base.deploymentIdentity, inheritanceId: base.inheritanceId };
+    await assert.rejects(requestKeyRelease({ ...base, fetch: fetcher(jsonResponse(200, huge)) }), (error) => error.code === 'unavailable');
 });

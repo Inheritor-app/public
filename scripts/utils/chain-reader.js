@@ -19,6 +19,7 @@
  */
 
 const { performance } = require('perf_hooks');
+const { readBodyBounded, discardBody, BodyTooLarge } = require('./bounded-body');
 
 const DEFAULT_POLICY = {
     maxLatestBlockAgeSec: 60,
@@ -76,7 +77,8 @@ const sameBlock = (a, b) => a.number === b.number && a.hash === b.hash && a.time
 function operatorKeys(provider) {
     const name = `name:${String(provider.operator).trim().toLowerCase()}`;
     if (!provider.host) return [name];
-    const host = String(provider.host).toLowerCase();
+    // Lowercase, without the DNS root dot: "RPC.example.org." is the same host as "rpc.example.org"
+    const host = String(provider.host).toLowerCase().replace(/\.+(?=:\d+$|$)/, '');
     const hostname = host.replace(/:\d+$/, '');
     const literal = /^[\d.]+$/.test(hostname) || hostname.startsWith('[') || hostname === 'localhost';
     const site = literal ? host : hostname.split('.').slice(-2).join('.');
@@ -107,15 +109,19 @@ function httpTransport({ operator, url, fetch = globalThis.fetch, timeoutMs = DE
                     redirect: 'error',
                     signal: AbortSignal.timeout(timeoutMs)
                 });
-                text = await response.text();
+                if (response.status !== 200) {
+                    await discardBody(response);
+                } else {
+                    text = (await readBodyBounded(response, maxResponseBytes)).toString('utf8');
+                }
             } catch (error) {
+                if (error instanceof BodyTooLarge) {
+                    throw new ChainVerificationError('malformed_response', `${parsed.host}: response too large`);
+                }
                 throw Object.assign(new Error(`${parsed.host}: no response`), { unavailable: true });
             }
             if (response.status !== 200) {
                 throw Object.assign(new Error(`${parsed.host}: HTTP ${response.status}`), { unavailable: true });
-            }
-            if (text.length > maxResponseBytes) {
-                throw new ChainVerificationError('malformed_response', `${parsed.host}: response too large`);
             }
             const date = response.headers.get('date');
             const parsedDate = date ? new Date(date) : null;
@@ -225,9 +231,11 @@ class TwoProviderReader {
 
     /** The higher head, confirmed by both providers, and the providers' agreed time. */
     async agreedLatest(a, b) {
-        const [headA, headB] = await Promise.all([this.block(a, 'latest'), this.block(b, 'latest')]);
-        const now = this.agreedTime(headA.date, headB.date);
+        // The Date headers were stamped after this moment; counting from it includes transfer and waiting time.
+        // A Date has whole seconds, so the true time may be up to 1 s later.
         const agreedAt = performance.now();
+        const [headA, headB] = await Promise.all([this.block(a, 'latest'), this.block(b, 'latest')]);
+        const now = this.agreedTime(headA.date, headB.date) + 1;
         if (headA.block.number === headB.block.number) {
             if (!sameBlock(headA.block, headB.block)) {
                 throw new ChainVerificationError('providers_disagree', 'providers disagree on the latest block');

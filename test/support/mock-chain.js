@@ -124,6 +124,8 @@ class MockChain {
                 const request = JSON.parse(body);
                 requests.push(request);
                 if (view.fail) throw Object.assign(new Error('connection refused'), { unavailable: true });
+                // The server stamps its Date when the request arrives; a delay is a slow answer after that
+                const date = 'date' in view ? view.date : new Date();
                 const delay = view.delayMs && view.delayMs[request.method];
                 if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
                 const reply = { jsonrpc: '2.0', id: request.id };
@@ -134,7 +136,7 @@ class MockChain {
                 } catch (error) {
                     reply.error = { code: error.rpcCode ?? -32603, message: error.message };
                 }
-                return { status: 200, body: JSON.stringify(reply), date: 'date' in view ? view.date : new Date() };
+                return { status: 200, body: JSON.stringify(reply), date };
             }
         };
     }

@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ethers } = require('ethers');
 
-const { TwoProviderReader, ChainVerificationError } = require('../scripts/utils/chain-reader');
+const { TwoProviderReader, ChainVerificationError, httpTransport } = require('../scripts/utils/chain-reader');
 const { MockChain } = require('./support/mock-chain');
 
 const REGISTRY = '0xe33AB05Eef0d1803ca564C9a1DFaC6797853D3d2';
@@ -103,6 +103,10 @@ test('two labels for the same endpoint or site do not count as two operators', a
         (error) => error.code === 'not_enough_providers'
     );
     await assert.rejects(
+        reader([c.provider('Operator A', { host: 'rpc.example.org' }), c.provider('Operator B', { host: 'rpc.example.org.' })]).read([lookup]),
+        (error) => error.code === 'not_enough_providers'
+    );
+    await assert.rejects(
         reader([c.provider('Operator A'), c.provider(' operator a ')]).read([lookup]),
         (error) => error.code === 'not_enough_providers'
     );
@@ -112,12 +116,38 @@ test('two labels for the same endpoint or site do not count as two operators', a
 });
 
 test('block ages are checked again after slow answers, against the elapsed time', async () => {
+    const policy = { maxLatestBlockAgeSec: 4 };
     const c = chain({ latestAge: 2 });
-    const slow = c.provider('B', { delayMs: { eth_call: 1500 } });
-    await assert.rejects(
-        reader([c.provider('A'), slow], { maxLatestBlockAgeSec: 3 }).read([lookup]),
-        (error) => error.code === 'stale_block'
-    );
+    await reader([c.provider('A'), c.provider('B')], policy).read([lookup]);
+
+    const slowCalls = c.provider('B', { delayMs: { eth_call: 1500 } });
+    await assert.rejects(reader([c.provider('A'), slowCalls], policy).read([lookup]), (error) => error.code === 'stale_block');
+
+    // The time a latest head takes to arrive after its server stamped the Date counts too
+    const slowHead = c.provider('B', { delayMs: { eth_getBlockByNumber: 1500 } });
+    await assert.rejects(reader([c.provider('A'), slowHead], policy).read([lookup]), (error) => error.code === 'stale_block');
+});
+
+test('an RPC response larger than the limit is cut off while it streams', async () => {
+    let delivered = 0;
+    const endless = async () => new Response(new ReadableStream({
+        pull(controller) {
+            delivered += 1024;
+            controller.enqueue(new Uint8Array(1024).fill(0x20));
+        }
+    }), { status: 200 });
+    const transport = httpTransport({ operator: 'Big', url: 'https://big.example', fetch: endless, maxResponseBytes: 8 * 1024 });
+    await assert.rejects(transport.post('{}'), (error) => error.code === 'malformed_response');
+    assert.ok(delivered <= 32 * 1024, `read ${delivered} bytes`);
+
+    // The body of an error answer is cancelled, not read
+    let cancelled = false;
+    const failing = async () => new Response(new ReadableStream({
+        pull(controller) { controller.enqueue(new Uint8Array(1024)); },
+        cancel() { cancelled = true; }
+    }), { status: 500 });
+    await assert.rejects(httpTransport({ operator: 'Err', url: 'https://err.example', fetch: failing }).post('{}'), (error) => error.unavailable);
+    assert.equal(cancelled, true);
 });
 
 test('a provider on the wrong chain or that does not answer is skipped', async () => {

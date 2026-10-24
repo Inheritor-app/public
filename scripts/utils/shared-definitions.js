@@ -23,8 +23,25 @@ const ENVELOPE_DOMAIN = 'INHERITOR_ENVELOPE_V2';
 const ENVIRONMENTS = ['production', 'test'];
 const ENVELOPE_PURPOSES = ['asset', 'metadata'];
 
-const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
+
+const isBase64Char = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47;
+
+/**
+ * Standard base64 with padding, as produced by Swift's base64EncodedString(): a multiple of four characters from
+ * A–Z a–z 0–9 + /, with one or two "=" only at the end. Checked in a loop: a regular expression over a payload of
+ * several megabytes exhausts the regex engine's stack.
+ */
+function isStandardBase64(value) {
+    if (typeof value !== 'string' || value.length % 4 !== 0) return false;
+    let end = value.length;
+    if (end > 0 && value.charCodeAt(end - 1) === 61) end--;
+    if (end > 0 && value.charCodeAt(end - 1) === 61 && end === value.length - 1) end--;
+    for (let i = 0; i < end; i++) {
+        if (!isBase64Char(value.charCodeAt(i))) return false;
+    }
+    return true;
+}
 
 /** A validation error naming the rejected field, as the shared vectors do. */
 class DefinitionError extends Error {
@@ -38,7 +55,7 @@ const abi = AbiCoder.defaultAbiCoder();
 
 function decodeBase64Field(envelope, name) {
     const value = envelope[name];
-    if (typeof value !== 'string' || !STANDARD_BASE64.test(value)) {
+    if (!isStandardBase64(value)) {
         throw new DefinitionError(name, 'missing or not standard base64');
     }
     return Buffer.from(value, 'base64');
@@ -133,7 +150,7 @@ module.exports = {
     ENVELOPE_DOMAIN,
     ENVIRONMENTS,
     ENVELOPE_PURPOSES,
-    STANDARD_BASE64,
+    isStandardBase64,
     DefinitionError,
     payloadFingerprint,
     deploymentIdentity,

@@ -11,6 +11,7 @@
 
 const { payloadFingerprint } = require('./shared-definitions');
 const { ClaimDenial } = require('./claim-context');
+const { readBodyBounded, discardBody, BodyTooLarge } = require('./bounded-body');
 
 const DEFAULT_ARWEAVE_GATEWAYS = ['https://arweave.net', 'https://ar-io.net'];
 const LIMITS = {
@@ -35,31 +36,13 @@ async function readBounded(url, fetch, { maxBytes, idleTimeoutMs, totalTimeoutMs
     try {
         const response = await fetch(url, { redirect: 'follow', signal: controller.signal });
         if (response.status !== 200) {
-            if (response.body) await response.body.cancel().catch(() => {});
+            await discardBody(response);
             throw new DownloadAborted(`HTTP ${response.status}`);
         }
-        const declared = Number(response.headers.get('content-length'));
-        if (declared > maxBytes) {
-            await response.body.cancel().catch(() => {});
-            throw new DownloadAborted('payload too large');
-        }
-        const reader = response.body.getReader();
-        const chunks = [];
-        let size = 0;
-        for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            touch();
-            size += value.length;
-            if (size > maxBytes) {
-                await reader.cancel().catch(() => {});
-                throw new DownloadAborted('payload too large');
-            }
-            chunks.push(value);
-        }
-        return Buffer.concat(chunks).toString('utf8');
+        return (await readBodyBounded(response, maxBytes, touch)).toString('utf8');
     } catch (error) {
         if (error instanceof DownloadAborted) throw error;
+        if (error instanceof BodyTooLarge) throw new DownloadAborted('payload too large');
         if (controller.signal.aborted && controller.signal.reason instanceof DownloadAborted) throw controller.signal.reason;
         throw new DownloadAborted('no response');
     } finally {

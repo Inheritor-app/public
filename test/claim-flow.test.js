@@ -50,6 +50,13 @@ test('a Claimable v3 inheritance with a matching payload is claimed and decrypte
     assert.equal(calls, 2 * (2 + 4 * 2));
 });
 
+test('a multi-megabyte asset is verified and decrypted', async () => {
+    const plaintext = require('crypto').randomBytes(6 * 1024 * 1024);
+    const fixture = buildClaimFixture({ plaintext });
+    const result = await run(fixture);
+    assert.ok(result.plaintext.equals(plaintext));
+});
+
 test('a record that is not yet Claimable at the finalized block is not claimed and no key is requested', async () => {
     const fixture = buildClaimFixture();
     const workerDouble = fixture.worker();

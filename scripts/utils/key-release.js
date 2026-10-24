@@ -13,7 +13,10 @@
  */
 
 const { ethers } = require('ethers');
-const { STANDARD_BASE64 } = require('./shared-definitions');
+const { isStandardBase64 } = require('./shared-definitions');
+const { readBodyBounded } = require('./bounded-body');
+
+const MAX_RESPONSE_BYTES = 64 * 1024;
 
 const KEY_PROVIDER_DOMAIN = { name: 'Inheritor Key Provider', version: '2' };
 
@@ -99,7 +102,7 @@ async function requestKeyRelease({ baseUrl, beneficiaryPrivateKey, fetch = globa
             body: JSON.stringify(body),
             redirect: 'error'
         });
-        text = await response.text();
+        text = (await readBodyBounded(response, MAX_RESPONSE_BYTES)).toString('utf8');
     } catch (error) {
         throw new KeyReleaseError('unavailable', { message: `The key provider did not answer: ${error.message}` });
     }
@@ -122,7 +125,7 @@ async function requestKeyRelease({ baseUrl, beneficiaryPrivateKey, fetch = globa
         });
     }
 
-    if (!reply || typeof reply.encryptedSymmetricKey !== 'string' || !STANDARD_BASE64.test(reply.encryptedSymmetricKey) ||
+    if (!reply || !isStandardBase64(reply.encryptedSymmetricKey) ||
         reply.encryptedSymmetricKey.length === 0) {
         throw new KeyReleaseError('malformed_response', { message: 'The key provider returned no valid key' });
     }
