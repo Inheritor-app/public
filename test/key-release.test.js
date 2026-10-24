@@ -104,3 +104,31 @@ test('worker refusals surface their code, state and retry time', async () => {
     const huge = { encryptedSymmetricKey: 'QUJD'.repeat(50_000), deploymentIdentity: base.deploymentIdentity, inheritanceId: base.inheritanceId };
     await assert.rejects(requestKeyRelease({ ...base, fetch: fetcher(jsonResponse(200, huge)) }), (error) => error.code === 'unavailable');
 });
+
+test('a key provider that stalls or trickles its answer is given up on', async () => {
+    const base = {
+        baseUrl: 'https://worker.test',
+        chainId: 1,
+        ...vector.release,
+        beneficiaryPrivateKey: vector.beneficiaryPrivateKey,
+        now: () => vector.release.timestamp,
+        timeoutMs: 200
+    };
+    // Each answer sends one byte, then waits for more until the request is aborted
+    const trickling = (status) => async (url, init) => new Response(new ReadableStream({
+        async pull(controller) {
+            await new Promise((resolve, reject) => {
+                const timer = setTimeout(resolve, 50);
+                init.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(init.signal.reason); });
+            });
+            controller.enqueue(new Uint8Array([0x20]));
+        }
+    }), { status });
+    for (const status of [200, 403]) {
+        const started = Date.now();
+        await assert.rejects(requestKeyRelease({ ...base, fetch: trickling(status) }), (error) => error.code === 'unavailable');
+        assert.ok(Date.now() - started < 2000);
+    }
+    const never = async (url, init) => new Promise((resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal.reason)));
+    await assert.rejects(requestKeyRelease({ ...base, fetch: never }), (error) => error.code === 'unavailable');
+});

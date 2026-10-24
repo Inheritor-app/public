@@ -17,6 +17,8 @@ const { isStandardBase64 } = require('./shared-definitions');
 const { readBodyBounded } = require('./bounded-body');
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
+// Covers the request and reading the answer
+const TIMEOUT_MS = 30 * 1000;
 
 const KEY_PROVIDER_DOMAIN = { name: 'Inheritor Key Provider', version: '2' };
 
@@ -87,9 +89,9 @@ async function signReleaseRequest(fields, beneficiaryPrivateKey) {
 /**
  * Requests the wrapped key. Returns the decoded bytes of `encryptedSymmetricKey`.
  * @param {object} options baseUrl, chainId, deploymentIdentity, inheritanceId, beneficiary, payloadFingerprint,
- *     beneficiaryPrivateKey, and optionally fetch and now (unix seconds)
+ *     beneficiaryPrivateKey, and optionally fetch, now (unix seconds) and timeoutMs
  */
-async function requestKeyRelease({ baseUrl, beneficiaryPrivateKey, fetch = globalThis.fetch, now = () => Math.floor(Date.now() / 1000), ...fields }) {
+async function requestKeyRelease({ baseUrl, beneficiaryPrivateKey, fetch = globalThis.fetch, now = () => Math.floor(Date.now() / 1000), timeoutMs = TIMEOUT_MS, ...fields }) {
     const body = await signReleaseRequest({ ...fields, timestamp: now() }, beneficiaryPrivateKey);
     const url = `${baseUrl.replace(/\/+$/, '')}/v2/release`;
 
@@ -100,7 +102,8 @@ async function requestKeyRelease({ baseUrl, beneficiaryPrivateKey, fetch = globa
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-            redirect: 'error'
+            redirect: 'error',
+            signal: AbortSignal.timeout(timeoutMs)
         });
         text = (await readBodyBounded(response, MAX_RESPONSE_BYTES)).toString('utf8');
     } catch (error) {
