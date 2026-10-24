@@ -134,8 +134,8 @@ Nothing is decrypted unless every step passes:
 3. **Record.** At both blocks: the contract is not paused, the record exists and names you as beneficiary, it is `Claimable`, and it names the same parties and payload.
 4. **Two providers.** Every read comes from two providers of different operators. They must agree on each block and on every result, byte for byte. Each call is pinned to the block hash. Block ages are checked against the providers' own clocks. Any disagreement stops the claim.
 5. **Payload.** The payload downloaded from Arweave must match the record's `payloadFingerprint`. A gateway that serves anything else is skipped.
-6. **Key release.** The key provider releases the wrapped key on an EIP-712 release request signed with your beneficiary key, once it sees the record Claimable at both blocks.
-7. **Recheck and decrypt.** The record is verified again, and the asset is decrypted within 30 seconds of that check. Envelope v2 authenticates the deployment, inheritance, testator, beneficiary and purpose, so a payload copied from another record does not open.
+6. **Key release.** The record is verified again, so a check-in or revocation during the download stops the claim. Then the key provider releases the wrapped key on an EIP-712 release request signed with your beneficiary key, once it sees the record Claimable at both blocks.
+7. **Recheck and decrypt.** The record is verified again, and the asset is decrypted within 30 seconds of that check. The fingerprint does not cover the envelope's recipient data, so if a payload does not open, the next gateway's payload is tried. Envelope v2 authenticates the deployment, inheritance, testator, beneficiary and purpose, so a payload copied from another record does not open.
 
 A newly Claimable inheritance can be claimed once its block is finalized, about 15–20 minutes after it became Claimable.
 

@@ -58,14 +58,18 @@ function arweaveTransactionPath(arweaveTransactionId) {
 }
 
 /**
+ * Every payload, gateway by gateway, that matches the on-chain fingerprint. The fingerprint does not cover the
+ * recipient blocks, so a matching payload can still fail to decrypt; the caller then asks for the next one.
+ * Throws when no gateway served a matching payload at all.
  * @param {{arweaveTransactionId: string, expectedFingerprint: string, gateways?: string[], fetch?: Function, log?: Function,
  *     maxBytes?: number, idleTimeoutMs?: number, totalTimeoutMs?: number}} options
- * @returns {Promise<{json: string, gateway: string}>} The payload text whose fingerprint matched
+ * @returns {AsyncGenerator<{json: string, gateway: string}>}
  */
-async function downloadVerifiedPayload({ arweaveTransactionId, expectedFingerprint, gateways = DEFAULT_ARWEAVE_GATEWAYS, fetch = globalThis.fetch, log = () => {}, ...limits }) {
+async function* verifiedPayloads({ arweaveTransactionId, expectedFingerprint, gateways = DEFAULT_ARWEAVE_GATEWAYS, fetch = globalThis.fetch, log = () => {}, ...limits }) {
     const bounds = { ...LIMITS, ...limits };
     const txPath = arweaveTransactionPath(arweaveTransactionId);
     let mismatches = 0;
+    let matches = 0;
     for (const gateway of gateways) {
         const url = `${gateway.replace(/\/+$/, '')}/${txPath}`;
         const host = new URL(url).host;
@@ -83,13 +87,21 @@ async function downloadVerifiedPayload({ arweaveTransactionId, expectedFingerpri
             // Not an envelope: counted as a mismatch
         }
         if (fingerprint && fingerprint.toLowerCase() === expectedFingerprint.toLowerCase()) {
-            return { json: text, gateway: host };
+            matches++;
+            yield { json: text, gateway: host };
+            continue;
         }
         mismatches++;
         log(`Arweave gateway ${host}: payload does not match the on-chain fingerprint`);
     }
+    if (matches > 0) return;
     if (mismatches > 0) throw new ClaimDenial('fingerprint_mismatch');
     throw new Error('No Arweave gateway returned the payload. Check your connection, or set INHERITOR_ARWEAVE_GATEWAYS.');
 }
 
-module.exports = { DEFAULT_ARWEAVE_GATEWAYS, arweaveTransactionPath, downloadVerifiedPayload };
+/** The first payload that matches the on-chain fingerprint. */
+async function downloadVerifiedPayload(options) {
+    for await (const payload of verifiedPayloads(options)) return payload;
+}
+
+module.exports = { DEFAULT_ARWEAVE_GATEWAYS, arweaveTransactionPath, verifiedPayloads, downloadVerifiedPayload };

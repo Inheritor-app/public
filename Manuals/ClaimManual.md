@@ -123,13 +123,14 @@ node scripts/Beneficiary_Claim.js
 
 ### 3. Key release
 
+- The claim check runs again first, so a check-in, revocation or pause during the download stops the claim before anything is signed.
 - The tool signs a release request (EIP-712, domain "Inheritor Key Provider", version 2) with your beneficiary key. The request names the deployment, the inheritance, you, the payload fingerprint and the current time.
 - The key provider checks the request and the chain itself, then returns your wrapped key. It only does so when the record is Claimable at both the finalized and the latest block.
 
 ### 4. Recheck and decrypt
 
 - The claim check runs again, so a check-in, revocation or pause in the meantime stops the claim. Decryption must follow within 30 seconds of that check.
-- Your ML-KEM-768 key unwraps the content key, and the content key decrypts the asset. Envelope v2 authenticates the record the asset belongs to: the deployment, inheritance, testator, beneficiary and purpose. A payload copied from another record does not open.
+- Your ML-KEM-768 key unwraps the content key, and the content key decrypts the asset. If a gateway's copy does not open (the fingerprint does not cover the envelope's recipient data), the next gateway's copy is tried with the same key. Envelope v2 authenticates the record the asset belongs to: the deployment, inheritance, testator, beneficiary and purpose. A payload copied from another record does not open.
 
 ## Configuration
 

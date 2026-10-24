@@ -113,6 +113,11 @@ function openContent(envelope, contentKey, context) {
     }
 }
 
+/** Throws unless the envelope has a usable ML-KEM-768 recipient, before anything is requested for it. */
+function checkEnvelope(envelope) {
+    externalRecipient(envelope);
+}
+
 /**
  * Decrypts a claimed asset.
  * @param {object} envelope Parsed envelope (parseEnvelope) downloaded from Arweave and checked against the fingerprint
@@ -152,6 +157,7 @@ module.exports = {
     ENVELOPE_VERSION,
     RECIPIENT_VERSION,
     parseEnvelope,
+    checkEnvelope,
     decryptAsset,
     decryptMetadata
 };

@@ -44,10 +44,10 @@ test('a Claimable v3 inheritance with a matching payload is claimed and decrypte
     assert.equal(result.fileType, 'pdf');
     assert.equal(workerDouble.requests.length, 1);
     assert.equal(workerDouble.requests[0].payloadFingerprint, fixture.record.payloadFingerprint);
-    // The context is read twice, before the download and again after the key is released. Each read is the
-    // registry at both blocks, then registry, record, pause flag and version at both blocks.
+    // The context is read three times: before the download, before the key request and before decryption. Each
+    // read is the registry at both blocks, then registry, record, pause flag and version at both blocks.
     const calls = a.requests.filter((r) => r.method === 'eth_call').length;
-    assert.equal(calls, 2 * (2 + 4 * 2));
+    assert.equal(calls, 3 * (2 + 4 * 2));
 });
 
 test('a multi-megabyte asset is verified and decrypted', async () => {
@@ -102,6 +102,54 @@ test('a worker refusal is reported with its code', async () => {
     await assert.rejects(run(fixture, { workerDouble }), (error) => error.code === 'not_claimable' && error.state.finalized === 0);
 });
 
+test('a revocation during the download stops the claim before any key is requested', async () => {
+    const fixture = buildClaimFixture();
+    const chain = fixture.chain();
+    const workerDouble = fixture.worker();
+    const fetch = fixture.fetchDouble({ workerDouble });
+    const revokingFetch = async (url, init) => {
+        if (url.startsWith('https://arweave.test')) {
+            for (const block of chain.blocks.values()) {
+                const contract = Object.values(block.state.inheritors)[0];
+                contract.records = { [fixture.inheritanceId.toLowerCase()]: { ...fixture.record, state: 3 } };
+            }
+        }
+        return fetch(url, init);
+    };
+    await assert.rejects(claimInheritance({
+        config: fixture.config, network: 'ethereum', inheritanceId: fixture.inheritanceId, keys: fixture.keys,
+        readers: readersFor(chain), fetch: revokingFetch, log: () => {}
+    }), (error) => error.code === 'not_claimable');
+    assert.equal(workerDouble.requests.length, 0);
+});
+
+test('a gateway whose recipients are corrupted is passed over for the next one', async () => {
+    const fixture = buildClaimFixture();
+    const json = JSON.parse(fixture.arweaveJson);
+    const variants = {
+        'no recipients': { ...json, recipients: [] },
+        'another capsule': {
+            ...json,
+            recipients: json.recipients.map((r) => (r.type === 'mlkem768' ? { ...r, kem_ct: Buffer.alloc(1088, 5).toString('base64') } : r))
+        }
+    };
+    for (const [name, corrupted] of Object.entries(variants)) {
+        const workerDouble = fixture.worker();
+        const config = { ...fixture.config, arweaveGateways: ['https://bad.test', 'https://arweave.test'] };
+        const result = await claimInheritance({
+            config, network: 'ethereum', inheritanceId: fixture.inheritanceId, keys: fixture.keys,
+            readers: readersFor(fixture.chain()), log: () => {},
+            fetch: fixture.fetchDouble({ workerDouble, gateways: { 'https://bad.test': JSON.stringify(corrupted), 'https://arweave.test': fixture.arweaveJson } })
+        });
+        assert.deepEqual(result.plaintext, fixture.plaintext, name);
+        assert.equal(workerDouble.requests.length, 1, name);
+    }
+
+    // With only the corrupted gateway the claim fails, and nothing is decrypted
+    const workerDouble = fixture.worker();
+    await assert.rejects(run(fixture, { workerDouble, gateways: { 'https://arweave.test': JSON.stringify(variants['another capsule']) } }), /does not open|wrapped key/);
+});
+
 test('a check-in between the key release and decryption stops the claim', async () => {
     const fixture = buildClaimFixture();
     const chain = fixture.chain();
@@ -132,7 +180,7 @@ test('a recheck older than the maximum context age is not used to decrypt', asyn
         // The decryption happens 31 s after the recheck's reads started
         clock: () => performance.now() + 31_000
     }), (error) => error.code === 'context_expired');
-    assert.equal(reads, 4);
+    assert.equal(reads, 6);
 });
 
 test('keys of another beneficiary are refused before anything is downloaded', async () => {
