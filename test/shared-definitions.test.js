@@ -85,3 +85,16 @@ test('envelope v2 authenticated data rejects malformed contexts', () => {
     assert.throws(() => envelopeAuthenticatedData({ ...base, testator: '0x1234' }));
     assert.throws(() => envelopeAuthenticatedData({ ...base, deploymentIdentity: '0x12' }));
 });
+
+test('payload fingerprint of a 96 MiB ciphertext fits in the default heap', () => {
+    const { spawnSync } = require('child_process');
+    const script = `
+        const { payloadFingerprint } = require(${JSON.stringify(require.resolve('../scripts/utils/shared-definitions'))});
+        const ciphertext = Buffer.alloc(96 * 1024 * 1024, 7);
+        const envelope = JSON.stringify({ nonce: Buffer.alloc(12, 1).toString('base64'), tag: Buffer.alloc(16, 2).toString('base64'), ciphertext: ciphertext.toString('base64') });
+        process.stdout.write(payloadFingerprint(envelope));
+    `;
+    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr.slice(0, 500));
+    assert.match(run.stdout, /^0x[0-9a-f]{64}$/);
+});

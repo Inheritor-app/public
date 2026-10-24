@@ -16,6 +16,7 @@
  */
 
 const { AbiCoder, keccak256, getAddress, ZeroAddress, ZeroHash } = require('ethers');
+const { keccak256: keccakStream } = require('js-sha3');
 
 const PAYLOAD_FP_DOMAIN = 'INHERITOR_PAYLOAD_FP_V1';
 const DEPLOYMENT_DOMAIN = 'INHERITOR_DEPLOYMENT_V1';
@@ -85,7 +86,34 @@ function payloadFingerprint(envelope) {
     const ciphertext = decodeBase64Field(env, 'ciphertext');
     if (ciphertext.length === 0) throw new DefinitionError('ciphertext', 'empty');
 
-    return keccak256(abi.encode(['string', 'bytes12', 'bytes', 'bytes16'], [PAYLOAD_FP_DOMAIN, nonce, ciphertext, tag]));
+    return payloadCommitment(nonce, ciphertext, tag);
+}
+
+const word = (value) => {
+    const out = Buffer.alloc(32);
+    out.writeBigUInt64BE(BigInt(value), 24);
+    return out;
+};
+const rightPadded = (bytes) => Buffer.concat([bytes, Buffer.alloc(32 - bytes.length)]);
+
+/**
+ * keccak256(abi.encode(string domain, bytes12 nonce, bytes ciphertext, bytes16 tag)), hashed in segments: the ABI
+ * encoder builds hex strings of the whole payload, which exhausts the heap for large assets.
+ *
+ *   head: offset(domain) = 128, nonce, offset(ciphertext) = 128 + 64, tag
+ *   tail: len(domain), domain padded to 32, len(ciphertext), ciphertext padded to a multiple of 32
+ */
+function payloadCommitment(nonce, ciphertext, tag) {
+    const domain = Buffer.from(PAYLOAD_FP_DOMAIN, 'utf8');
+    const domainTail = Buffer.concat([word(domain.length), rightPadded(domain)]);
+    const hash = keccakStream.create();
+    hash.update(Buffer.concat([word(128), rightPadded(nonce), word(128 + domainTail.length), rightPadded(tag), domainTail, word(ciphertext.length)]));
+    const chunk = 16 * 1024 * 1024;
+    for (let offset = 0; offset < ciphertext.length; offset += chunk) {
+        hash.update(ciphertext.subarray(offset, offset + chunk));
+    }
+    hash.update(Buffer.alloc((32 - (ciphertext.length % 32)) % 32));
+    return '0x' + hash.hex();
 }
 
 /**
