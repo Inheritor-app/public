@@ -1,6 +1,8 @@
 # Inheritor Beneficiary Check Tool
 ## User Manual
 
+For Inheritor contract v3 and envelope v2.
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Before You Begin](#before-you-begin)
@@ -19,9 +21,11 @@ The Inheritor Beneficiary Check Tool allows beneficiaries to monitor and interac
 The tool works with the quantum-safe Inheritor system that uses advanced post-quantum cryptography (ML-KEM-768) to ensure your inheritances remain secure against future quantum computing threats. While this tool focuses on status checking and management functions, it's designed to work seamlessly with the quantum-safe architecture.
 
 With this tool, you can:
-- View all inheritances designated to your beneficiary address
-- Check if specific inheritances are claimable (and potentially trigger state changes)
-- Refund unused ETH from your beneficiary wallet to your gas wallet
+- View all inheritances designated to your beneficiary address, with the testator's name and message
+- Check if specific inheritances are claimable at the finalized and the latest block (and potentially trigger state changes)
+- Fund your beneficiary wallet, and refund unused ETH to your gas wallet
+
+All inheritance data is read from the contract the Inheritor registry names, and verified by two independent RPC providers at the finalized and the latest block. See the Configuration section of the [Claim Manual](ClaimManual.md#configuration) for the providers and other settings. The single RPC provider you choose at startup is only used to send transactions.
 
 This tool is designed as a companion to the Beneficiary Claim Tool, helping you verify when inheritances become available for claiming using quantum-resistant cryptography.
 
@@ -42,7 +46,7 @@ Before using this tool, you'll need:
 
 ### Installing Node.js (Required)
 
-This tool requires Node.js, which is NOT included by default in macOS, Windows, or Linux systems. You'll need to install it first:
+This tool requires Node.js 18 or higher, which is NOT included by default in macOS, Windows, or Linux systems. You'll need to install it first:
 
 #### macOS:
 1. Option 1: Download the installer from [Node.js website](https://nodejs.org/)
@@ -87,7 +91,7 @@ Note: Private key can be provided with or without the 0x prefix.
 ```bash
 node --version
 ```
-This should display the Node.js version (should be 16.0.0 or higher)
+This should display the Node.js version (should be 18.0.0 or higher)
 
 ## Running the Tool
 
@@ -110,13 +114,15 @@ node scripts/Beneficiary_CheckClaimable.js
    - Ensure this wallet contains sufficient ETH for transaction fees
 
 3. **Select Network**:
-   - Type either `ethereum` or `arbitrum` (case insensitive)
+   - Type `1` for Ethereum or `2` for Arbitrum
    - Press Enter to confirm
+   - The tool shows the environment and the providers used for verified reads
 
-4. **RPC Configuration**:
+4. **RPC Configuration (for transactions)**:
    - Choose option `1` if you have your own RPC URL (Infura, Alchemy, etc.)
    - Choose option `2` to use public endpoints
    - If using option `1`, enter your complete RPC URL when prompted
+   - This provider only sends the `isClaimable`, funding and refund transactions
 
 5. **Main Menu**:
    The tool will connect to the network and display the main menu:
@@ -144,16 +150,16 @@ node scripts/Beneficiary_CheckClaimable.js
 This function displays all inheritances designated to your beneficiary address.
 
 - **Process**:
-  - Connects to the blockchain
-  - Retrieves inheritance IDs associated with your address
-  - Fetches all inheritance details
+  - Resolves the contract through the registry and checks that it is version 3
+  - Retrieves the inheritance IDs associated with your address, and their records, verified by two providers
+  - Decrypts the testator's name and message with your quantum-safe key (envelope v2, purpose `metadata`)
   - Displays a formatted list with key details
 
 - **Display Information**:
   - Inheritance IDs
-  - Testator addresses
+  - Testator name and address, and the testator's message
   - Current state (color-coded for easy recognition)
-  - Scheduled transfer time (if applicable)
+  - Revoked inheritances are not shown
 
 - **When to Use**:
   - To get an overview of all inheritances you're designated to receive
@@ -165,17 +171,18 @@ This function displays all inheritances designated to your beneficiary address.
 This function verifies if a specific inheritance is claimable and may update its state on the blockchain.
 
 - **Process**:
-  - Retrieves detailed information about the inheritance
-  - Verifies you are the intended beneficiary
-  - Checks beneficiary wallet balance for gas
-  - Calls the `isClaimable` contract function
-  - Updates and displays the new inheritance state
+  - Reads the inheritance at the finalized and the latest block, verified by two providers
+  - Shows the state at both blocks, the contract version and whether the contract is paused
+  - If it is Claimable at both blocks and you are the beneficiary, it is ready: run the Claim Tool
+  - If it is still Designated, checks your beneficiary wallet balance and offers to send the `isClaimable` transaction
+  - After the transaction, reads and displays the new state
 
 - **Important Notes**:
   - Requires the full 64-character inheritance ID (with 0x prefix)
-  - May trigger a state change on the blockchain if conditions are met
+  - The `isClaimable` transaction is only sent after you confirm with `yes`
+  - It may change the state on the blockchain if the conditions are met
   - Requires sufficient ETH in your beneficiary wallet for gas
-  - Will warn you if you're not the designated beneficiary
+  - A newly Claimable inheritance can be claimed once its block is finalized, about 15–20 minutes later
   - Shows possible reasons if inheritance is not yet claimable
 
 - **When to Use**:
@@ -291,6 +298,22 @@ This is necessary before using the Claim Tool, as inheritances must be in the Cl
 #### "Connection failed"
 - **Cause**: RPC provider is unavailable or rate-limited
 - **Solution**: Try option 2 to use public endpoints, or use your own Infura/Alchemy key
+
+#### "independent providers answered" or "providers disagree"
+- **Cause**: fewer than two independent providers answered for the verified reads, or their answers differed
+- **Solution**: Try again later, or configure your own providers with `INHERITOR_ETHEREUM_RPCS` / `INHERITOR_ARBITRUM_RPCS` (see the Claim Manual)
+
+#### "Claimable at the latest block but not yet at the finalized block"
+- **Cause**: The inheritance became Claimable recently
+- **Solution**: Wait about 15–20 minutes, then claim
+
+#### "newer Inheritor contract than this tool supports"
+- **Cause**: Inheritor has been upgraded
+- **Solution**: Download the latest version of these tools
+
+#### "Testator name and message could not be decrypted"
+- **Cause**: The key file is not the one this inheritance was designated to, or the record's metadata is malformed
+- **Solution**: Check that you use the key file exported from the right device
 
 #### "No inheritances found for this beneficiary"
 - **Cause**: No inheritances are designated to your beneficiary address

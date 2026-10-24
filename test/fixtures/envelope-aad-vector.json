@@ -1,0 +1,10 @@
+{
+  "description": "Envelope v2 authenticated data, from the iOS app UnitTests/ClaimabilityFixtures.swift appVectors.envelopeAAD (Inherit main at e3994ff), computed there independently with ethers v6.",
+  "domain": "INHERITOR_ENVELOPE_V2",
+  "deploymentIdentity": "0x9800d4cc11a156d6ba548a0f5572b2fa08dee3f8da87678afa2d7477133bd3e2",
+  "inheritanceId": "0xb91a12968ae49e1115b1d791797eaacda2fae469ff647138e319520050ea0fa8",
+  "testator": "0x728a26D8FdF162196EC8Bb3A715B0463AcF03B52",
+  "beneficiary": "0xb4eED66a4564231767dfdeCC96c6496A113570d9",
+  "asset": "0xc060c4641bedf7cca5c32806f208530eebd33f4ce8bf3d3c875cced1c8fabef0",
+  "metadata": "0x6cc01a3933b6769def4ffc591b1ef28c923725b8cc1d3792ee5687de07f54091"
+}

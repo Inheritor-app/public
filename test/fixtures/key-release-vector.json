@@ -1,0 +1,19 @@
+{
+  "description": "Release request vector from key-provider test/keyprovider/v2/fixtures/request-vectors.json (main at ab5a388). The beneficiary key is a throwaway test key derived from a public string; it must never hold funds. Storage fields are left out: the CLI only sends release requests.",
+  "eip712Domain": {
+    "name": "Inheritor Key Provider",
+    "version": "2"
+  },
+  "beneficiaryPrivateKey": "0x3e15d36a02ac2347d377cdae60fffd421fd4445950c6a4f2f7724e56c76e3115",
+  "beneficiary": "0x7D6f37bc2CC3acab1fCe5206869BB177C226b7C9",
+  "domainSeparator": "0x01b341d33472ccfc5c17821d41740250120d3d5c38fd64d8bd5e78046291eec1",
+  "release": {
+    "deploymentIdentity": "0x9800d4cc11a156d6ba548a0f5572b2fa08dee3f8da87678afa2d7477133bd3e2",
+    "inheritanceId": "0x57d40f97185bd708952d88b4858467be1f0a0323a2e8114141c8e138745b2969",
+    "beneficiary": "0x7D6f37bc2CC3acab1fCe5206869BB177C226b7C9",
+    "payloadFingerprint": "0xe9cf7e7be7b953b7a1bfdcda843f24f8d9f107de0d01f1137699d58ff4592303",
+    "timestamp": 1792756800
+  },
+  "releaseDigest": "0x2d8a95907336398d11c30b5af1a5fe6039acea0c37fb6c70d7212a0103494d06",
+  "releaseSignature": "0x8831eaf546a28cdfe2ca8de62ff21bbc722f5204f0b64e23795ec11742ffde3233fbfe1c9044e56a20dbecf47d2f60ea2048ea9abbecec23afe00f11c600ea351c"
+}
