@@ -122,7 +122,7 @@ These tools provide direct access to your blockchain assets and sensitive crypto
 
 The Inheritor system uses post-quantum cryptography (ML-KEM-768) for beneficiary key encryption. To verify that the iOS application does not exfiltrate your ML-KEM-768 private keys, see [Manuals/ExfiltrationVerification.pdf](Manuals/ExfiltrationVerification.pdf).
 
-This document provides a user-verifiable protocol for detecting potential key exfiltration through network traffic analysis. Users can independently confirm that CloudFlare POST requests remain under 700 bytes (legitimate) versus the 2,400+ bytes required to exfiltrate an ML-KEM-768 private key—providing mathematically certain detection through simple packet size monitoring.
+This document (version 2.0, for Inheritor 3.0) lists every endpoint the app contacts and what it sends, and gives a protocol to check it yourself through network traffic analysis. The app's only request to the key provider has a body of 783–867 bytes, while sending the ML-KEM-768 private key needs at least 3,900 bytes, so a key provider request over 1,500 bytes is clear evidence that something else is being sent. A small request does not prove that no key left the device: a compromised build could send a key seed, or split a key over several requests or endpoints. The document explains these limits.
 
 
 ## How a Claim Is Verified
